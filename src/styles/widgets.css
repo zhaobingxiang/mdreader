@@ -347,6 +347,19 @@
   border-top: 1px solid var(--border-1);
 }
 
+/* 消息确认弹窗（替代原生 confirm / MessageBox） */
+.modal__panel--message {
+  width: min(420px, 100%);
+}
+
+.message__text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--text-1);
+  white-space: pre-line;
+}
+
 .diff {
   margin: 0;
   font-family: var(--font-mono);

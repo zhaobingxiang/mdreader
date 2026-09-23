@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Drawing;
 using System.IO.Pipes;
+using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
@@ -15,6 +16,9 @@ internal sealed class MainForm : Form
     private CancellationTokenSource? _pipeCts;
     private readonly Label _loadingLabel;
 
+    private bool _allowExit;
+    private int _borderPx = 7;
+
     public MainForm(string? initialFile)
     {
         _initialFile = initialFile;
@@ -24,6 +28,11 @@ internal sealed class MainForm : Form
         Size = new Size(1340, 900);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(247, 247, 245);
+
+        // 无边框窗口：标题栏 / 最小化 / 最大化 / 关闭全部由页面内自绘，
+        // 深色模式才能整体一致；边缘留出一条缩放带（见 WndProc）
+        FormBorderStyle = FormBorderStyle.None;
+
         try
         {
             Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
@@ -57,6 +66,24 @@ internal sealed class MainForm : Form
 
         Load += OnLoadAsync;
         FormClosed += OnFormClosed;
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        _borderPx = (int)Math.Round(7 * DeviceDpi / 96.0);
+        Padding = new Padding(_borderPx);
+
+        // Win11 圆角；Win10 上只是返回错误码，无副作用
+        try
+        {
+            var round = 2; // DWMWCP_ROUND
+            _ = DwmSetWindowAttribute(Handle, 33, ref round, sizeof(int));
+        }
+        catch
+        {
+            // 无 dwmapi 环境忽略
+        }
     }
 
     private async void OnLoadAsync(object? sender, EventArgs e)
@@ -120,24 +147,139 @@ internal sealed class MainForm : Form
         }
     }
 
+    // ---------- 无边框窗口：拖动 / 缩放 / 最大化 ----------
+
+    protected override void WndProc(ref Message m)
+    {
+        const int WM_NCHITTEST = 0x0084;
+        const int WM_GETMINMAXINFO = 0x0024;
+
+        switch (m.Msg)
+        {
+            case WM_NCHITTEST:
+                var hit = HitTestEdge(m.LParam);
+                if (hit != 0)
+                {
+                    m.Result = (IntPtr)hit;
+                    return;
+                }
+                break;
+            case WM_GETMINMAXINFO:
+                // 无边框最大化默认会盖住任务栏，这里限制到工作区
+                ClampMaximizeToWorkArea(m.LParam);
+                return;
+        }
+        base.WndProc(ref m);
+    }
+
+    /// <summary>WebView2 铺满客户区，只有 Padding 留出的边缘带能被窗体命中</summary>
+    private int HitTestEdge(IntPtr lParam)
+    {
+        if (WindowState != FormWindowState.Normal) return 0;
+
+        var raw = lParam.ToInt32();
+        var screen = new Point((short)(raw & 0xFFFF), (short)((raw >> 16) & 0xFFFF));
+        var p = PointToClient(screen);
+        var b = _borderPx;
+
+        var left = p.X < b;
+        var right = p.X >= Width - b;
+        var top = p.Y < b;
+        var bottom = p.Y >= Height - b;
+
+        if (top && left) return HTTOPLEFT;
+        if (top && right) return HTTOPRIGHT;
+        if (bottom && left) return HTBOTTOMLEFT;
+        if (bottom && right) return HTBOTTOMRIGHT;
+        if (left) return HTLEFT;
+        if (right) return HTRIGHT;
+        if (top) return HTTOP;
+        if (bottom) return HTBOTTOM;
+        return 0;
+    }
+
+    private void ClampMaximizeToWorkArea(IntPtr lParam)
+    {
+        var mmi = Marshal.PtrToStructure<MINMAXINFO>(lParam);
+        var monitor = MonitorFromWindow(Handle, MONITOR_DEFAULTTONEAREST);
+        var info = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+        if (GetMonitorInfo(monitor, ref info))
+        {
+            var work = info.rcWork;
+            var mon = info.rcMonitor;
+            mmi.ptMaxSize.x = work.Right - work.Left;
+            mmi.ptMaxSize.y = work.Bottom - work.Top;
+            mmi.ptMaxPosition.x = work.Left - mon.Left;
+            mmi.ptMaxPosition.y = work.Top - mon.Top;
+            mmi.ptMinTrackSize.x = Math.Min(MinimumSize.Width, mmi.ptMaxSize.x);
+            mmi.ptMinTrackSize.y = Math.Min(MinimumSize.Height, mmi.ptMaxSize.y);
+        }
+        Marshal.StructureToPtr(mmi, lParam, true);
+    }
+
+    protected override void OnSizeChanged(EventArgs e)
+    {
+        base.OnSizeChanged(e);
+        var maximized = WindowState == FormWindowState.Maximized;
+        Padding = maximized ? new Padding(0) : new Padding(_borderPx);
+        // 构造期间 Size 变化会先于 _bridge 赋值触发
+        _bridge?.NotifyWindowState(maximized);
+    }
+
+    /// <summary>页面标题栏按下时交回系统做窗口拖动</summary>
+    public void BeginDrag()
+    {
+        ReleaseCapture();
+        _ = SendMessage(Handle, WM_NCLBUTTONDOWN, (IntPtr)HTCAPTION, IntPtr.Zero);
+    }
+
+    public void MinimizeWindow() => WindowState = FormWindowState.Minimized;
+
+    public void ToggleMaximize() =>
+        WindowState = WindowState == FormWindowState.Maximized
+            ? FormWindowState.Normal
+            : FormWindowState.Maximized;
+
+    public void RequestClose() => Close();
+
+    /// <summary>前端确认弹窗的答复：proceed 才真正退出</summary>
+    public void CompleteExit(bool proceed)
+    {
+        if (!proceed) return;
+        _allowExit = true;
+        BeginInvoke((Action)Close);
+    }
+
+    /// <summary>深浅主题下，边缘缩放带 / 客户区底色要跟页面一致</summary>
+    public void SetChromeDark(bool dark)
+    {
+        var color = dark ? Color.FromArgb(13, 17, 23) : Color.FromArgb(247, 247, 245);
+        if (BackColor != color) BackColor = color;
+    }
+
     /// <summary>
-    /// WebView2 里 beforeunload 不会弹系统确认框，未保存拦截必须由宿主做。
-    /// 脏状态由前端 setTitle 持续同步进 HostBridge。
+    /// 未保存退出拦截：WebView2 里 beforeunload 不会弹系统确认框，
+    /// 确认 UI 放在页面内（风格统一），宿主只负责取消关闭并等答复。
     /// </summary>
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        if (_bridge.DocumentDirty)
+        if (!_allowExit && e.CloseReason == CloseReason.UserClosing && _bridge.DocumentDirty)
         {
-            var answer = MessageBox.Show(
-                "当前文档有未保存的修改，确定退出吗？",
-                "mdreader",
-                MessageBoxButtons.YesNoCancel,
-                MessageBoxIcon.Warning);
-            if (answer != DialogResult.Yes)
+            e.Cancel = true;
+            // 页面活着走页内确认；页面不可用（崩溃等）退回原生框
+            if (!_bridge.RequestExit())
             {
-                e.Cancel = true;
-                return;
+                if (MessageBox.Show(
+                        "当前文档有未保存的修改，确定退出吗？",
+                        "mdreader",
+                        MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Warning) == DialogResult.Yes)
+                {
+                    _allowExit = true;
+                    BeginInvoke((Action)Close);
+                }
             }
+            return;
         }
         base.OnFormClosing(e);
     }
@@ -254,4 +396,62 @@ internal sealed class MainForm : Form
         _pipeCts?.Dispose();
         _bridge.Dispose();
     }
+
+    // ---------- Win32 互操作 ----------
+
+    private const int WM_NCLBUTTONDOWN = 0x00A1;
+    private const int HTCAPTION = 2;
+    private const int HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13;
+    private const int HTTOPRIGHT = 14, HTBOTTOM = 15, HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17;
+    private const int MONITOR_DEFAULTTONEAREST = 2;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT
+    {
+        public int x;
+        public int y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MINMAXINFO
+    {
+        public POINT ptReserved;
+        public POINT ptMaxSize;
+        public POINT ptMaxPosition;
+        public POINT ptMinTrackSize;
+        public POINT ptMaxTrackSize;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MONITORINFO
+    {
+        public int cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, int flags);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int pvAttribute, int cbAttribute);
 }

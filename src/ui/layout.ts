@@ -2,6 +2,8 @@ import type { ViewMode } from '../core/view-mode'
 
 export interface AppLayout {
   root: HTMLElement
+  titleBar: HTMLElement
+  titleDoc: HTMLElement
   workspace: HTMLElement
   splitter: HTMLElement
   docName: HTMLElement
@@ -50,6 +52,15 @@ export function createLayout(mount: HTMLElement): AppLayout {
   mount.classList.add('app')
   mount.dataset.mode = 'split'
   mount.innerHTML = `
+  <div class="titlebar" data-role="titlebar">
+    <span class="titlebar__doc" data-role="title-doc">mdreader</span>
+    <div class="titlebar__controls">
+      <button class="tb-btn" data-win="min" title="最小化" aria-label="最小化">─</button>
+      <button class="tb-btn" data-win="max" title="最大化" aria-label="最大化">□</button>
+      <button class="tb-btn tb-btn--close" data-win="close" title="关闭" aria-label="关闭">✕</button>
+    </div>
+  </div>
+
   <header class="topbar">
     <div class="topbar__group">
       <div class="menu" data-role="open-menu">
@@ -156,6 +167,8 @@ export function createLayout(mount: HTMLElement): AppLayout {
 
   return {
     root: mount,
+    titleBar: need(mount, 'titlebar'),
+    titleDoc: need(mount, 'title-doc'),
     workspace: need(mount, 'workspace'),
     splitter: need(mount, 'splitter'),
     docName: need(mount, 'doc-name'),

@@ -159,6 +159,26 @@ internal sealed class HostBridge : IDisposable
                 case "openRecent":
                     HandleOpenRecent(id, message);
                     break;
+                case "beginDrag":
+                    if (_form.IsHandleCreated) _form.BeginInvoke((Action)_form.BeginDrag);
+                    Reply(id, new JsonObject { ["ok"] = true });
+                    break;
+                case "winMin":
+                    if (_form.IsHandleCreated) _form.BeginInvoke((Action)_form.MinimizeWindow);
+                    Reply(id, new JsonObject { ["ok"] = true });
+                    break;
+                case "winMax":
+                    if (_form.IsHandleCreated) _form.BeginInvoke((Action)_form.ToggleMaximize);
+                    Reply(id, new JsonObject { ["ok"] = true });
+                    break;
+                case "winClose":
+                    Reply(id, new JsonObject { ["ok"] = true });
+                    if (_form.IsHandleCreated) _form.BeginInvoke((Action)_form.RequestClose);
+                    break;
+                case "exitResult":
+                    HandleExitResult(message);
+                    Reply(id, new JsonObject { ["ok"] = true });
+                    break;
                 default:
                     ReplyError(id, $"未知指令：{action}");
                     break;
@@ -308,12 +328,17 @@ internal sealed class HostBridge : IDisposable
     {
         var name = message["name"]?.GetValue<string>() ?? "mdreader";
         var dirty = message["dirty"]?.GetValue<bool>() ?? false;
+        var dark = message["dark"]?.GetValue<bool>();
         _dirty = dirty;
         var prefix = dirty ? "• " : string.Empty;
 
         if (_form.IsHandleCreated)
         {
-            _form.BeginInvoke((Action)(() => _form.Text = $"{prefix}{name} — mdreader"));
+            _form.BeginInvoke((Action)(() =>
+            {
+                _form.Text = $"{prefix}{name} — mdreader";
+                if (dark.HasValue) _form.SetChromeDark(dark.Value);
+            }));
         }
     }
 
@@ -336,6 +361,30 @@ internal sealed class HostBridge : IDisposable
         {
             // 定位失败不影响使用
         }
+    }
+
+    // ---------- 窗口控制 / 退出确认 ----------
+
+    private void HandleExitResult(JsonObject message)
+    {
+        var proceed = message["proceed"]?.GetValue<bool>() ?? false;
+        if (_form.IsHandleCreated)
+        {
+            _form.BeginInvoke((Action)(() => _form.CompleteExit(proceed)));
+        }
+    }
+
+    /// <summary>请前端弹自定义确认框；页面还没就绪时返回 false，调用方退回原生对话框</summary>
+    public bool RequestExit()
+    {
+        if (!_ready || _disposed || !_form.IsHandleCreated) return false;
+        Post(new JsonObject { ["event"] = "confirmExit" });
+        return true;
+    }
+
+    public void NotifyWindowState(bool maximized)
+    {
+        Post(new JsonObject { ["event"] = "windowState", ["maximized"] = maximized });
     }
 
     // ---------- 打印 / 最近文件 ----------

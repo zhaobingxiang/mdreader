@@ -27,6 +27,8 @@ export type HostEvent =
   | { event: 'fileChanged'; path: string; text: string }
   | { event: 'zoomChanged'; factor: number }
   | { event: 'error'; message: string }
+  | { event: 'windowState'; maximized: boolean }
+  | { event: 'confirmExit' }
 
 type PathListener = (text: string) => void
 
@@ -102,9 +104,9 @@ export function onHostEvent(cb: (event: HostEvent) => void): () => void {
   }
 }
 
-export function notifyTitle(name: string, dirty: boolean): void {
+export function notifyTitle(name: string, dirty: boolean, dark: boolean): void {
   if (!isWebViewHost()) return
-  void callHost('setTitle', { name, dirty }).catch(() => undefined)
+  void callHost('setTitle', { name, dirty, dark }).catch(() => undefined)
 }
 
 export function revealInExplorer(path: string): void {

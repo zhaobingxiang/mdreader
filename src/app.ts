@@ -12,7 +12,7 @@ import {
   webviewAdapter,
 } from './core/file/webview'
 import { clearDraft, loadDraft, saveDraft } from './core/draft'
-import { toggleTheme } from './core/theme'
+import { currentTheme, toggleTheme } from './core/theme'
 import { collectTodos, computeStats } from './core/stats'
 import { ViewModeController, type ViewMode } from './core/view-mode'
 import { WELCOME_DOC } from './core/welcome'
@@ -26,6 +26,7 @@ import { createDefaultRegistry, MarkdownEngine, type OutlineNode } from './rende
 import { PreviewPipeline } from './render/pipeline'
 import { debounce } from './render/util'
 import { showConfirmModal, showDiffModal } from './ui/diff-view'
+import { showMessageModal } from './ui/modal'
 import { clearPreviewHighlight, highlightPreviewRange, mapPreviewSelection } from './ui/highlight'
 import { createLayout } from './ui/layout'
 import {
@@ -63,9 +64,14 @@ export function bootstrapApp(mount: HTMLElement): void {
   }
 
   /** 丢弃当前未保存修改前的确认。返回 false 表示用户取消 */
-  function confirmDiscard(): boolean {
+  async function confirmDiscard(): Promise<boolean> {
     if (!model.snapshot.dirty) return true
-    return window.confirm('当前文档有未保存的修改，继续将丢失这些改动。确定继续？')
+    return showMessageModal({
+      title: '未保存的修改',
+      message: '当前文档有未保存的修改，继续将丢失这些改动。',
+      confirmLabel: '继续',
+      cancelLabel: '取消',
+    })
   }
 
   interface UiState {
@@ -262,9 +268,12 @@ export function bootstrapApp(mount: HTMLElement): void {
     const snapshot = model.snapshot
     layout.statPath.textContent = snapshot.path || snapshot.name
     layout.docName.textContent = snapshot.name
+    layout.titleDoc.textContent = snapshot.dirty
+      ? `• ${snapshot.name} — mdreader`
+      : `${snapshot.name} — mdreader`
     layout.dirtyDot.hidden = !snapshot.dirty
     layout.statNotice.textContent = snapshot.notice ?? ''
-    if (inDesktopShell) notifyTitle(snapshot.name, snapshot.dirty)
+    if (inDesktopShell) notifyTitle(snapshot.name, snapshot.dirty, currentTheme() === 'dark')
   }
 
   function currentLineInfos(): LineInfo[] {
@@ -328,16 +337,53 @@ export function bootstrapApp(mount: HTMLElement): void {
   // ---------- 桌面壳事件 ----------
 
   if (inDesktopShell) {
+    layout.root.classList.add('is-desktop')
     onHostEvent((event) => {
       if (event.event === 'openFile') {
         // 双击 .md、启动参数、第二个实例的转发都走这里
-        if (!confirmDiscard()) return
-        void model.open(createHostHandle(event))
+        void (async () => {
+          if (!(await confirmDiscard())) return
+          await model.open(createHostHandle(event))
+        })()
       } else if (event.event === 'error') {
         model.setNotice(event.message)
+      } else if (event.event === 'windowState') {
+        setMaximizedUi(event.maximized)
+      } else if (event.event === 'confirmExit') {
+        void (async () => {
+          const proceed = await showMessageModal({
+            title: '退出 mdreader',
+            message: '当前文档有未保存的修改，确定退出吗？',
+            confirmLabel: '退出',
+            cancelLabel: '继续编辑',
+          })
+          await callHost('exitResult', { proceed }).catch(() => undefined)
+        })()
       }
     })
   }
+
+  // ---------- 自绘标题栏（桌面壳） ----------
+
+  function setMaximizedUi(maximized: boolean): void {
+    layout.root.classList.toggle('is-maximized', maximized)
+    const btn = layout.titleBar.querySelector<HTMLElement>('[data-win="max"]')
+    if (!btn) return
+    btn.textContent = maximized ? '❐' : '□'
+    btn.title = maximized ? '向下还原' : '最大化'
+  }
+
+  // 无边框窗口的拖动由宿主配合：按下时交回系统标题栏逻辑
+  layout.titleBar.addEventListener('pointerdown', (event) => {
+    const mouse = event as PointerEvent
+    if (mouse.button !== 0) return
+    if ((event.target as HTMLElement).closest('[data-win]')) return
+    void callHost('beginDrag').catch(() => undefined)
+  })
+  layout.titleBar.addEventListener('dblclick', (event) => {
+    if ((event.target as HTMLElement).closest('[data-win]')) return
+    void callHost('winMax').catch(() => undefined)
+  })
 
   // ---------- 视图模式 ----------
 
@@ -369,7 +415,7 @@ export function bootstrapApp(mount: HTMLElement): void {
   // ---------- 文件操作 ----------
 
   async function openFile(): Promise<void> {
-    if (!confirmDiscard()) return
+    if (!(await confirmDiscard())) return
     if (inDesktopShell || isFsAccessSupported()) {
       const opened = await model.openViaPicker()
       if (opened) flashNotice('已打开')
@@ -477,6 +523,15 @@ export function bootstrapApp(mount: HTMLElement): void {
       return
     }
 
+    // 标题栏窗口按钮（桌面壳）
+    const winBtn = target.closest<HTMLElement>('[data-win]')
+    if (winBtn) {
+      const kind = winBtn.dataset.win
+      const action = kind === 'min' ? 'winMin' : kind === 'max' ? 'winMax' : 'winClose'
+      void callHost(action).catch(() => undefined)
+      return
+    }
+
     const actionBtn = target.closest<HTMLElement>('[data-action]')
     if (!actionBtn) return
     switch (actionBtn.dataset.action) {
@@ -497,7 +552,9 @@ export function bootstrapApp(mount: HTMLElement): void {
         void renderAll()
         break
       case 'new':
-        if (confirmDiscard()) model.createUntitled()
+        void confirmDiscard().then((ok) => {
+          if (ok) model.createUntitled()
+        })
         break
       case 'save':
         void saveFile()
@@ -759,8 +816,10 @@ export function bootstrapApp(mount: HTMLElement): void {
       flashNotice('只支持 .md / .markdown / .txt 文件')
       return
     }
-    if (!confirmDiscard()) return
-    void model.openDroppedFile(file)
+    void (async () => {
+      if (!(await confirmDiscard())) return
+      await model.openDroppedFile(file)
+    })()
   })
 
   // ---------- 快捷键 ----------
@@ -808,7 +867,9 @@ export function bootstrapApp(mount: HTMLElement): void {
     }
     if (key === 'n') {
       event.preventDefault()
-      if (confirmDiscard()) model.createUntitled()
+      void confirmDiscard().then((ok) => {
+        if (ok) model.createUntitled()
+      })
     }
   })
 
@@ -852,20 +913,24 @@ export function bootstrapApp(mount: HTMLElement): void {
   updateStatus()
 
   // 崩溃 / 误关后留下的未保存草稿，询问是否恢复
-  const draft = loadDraft()
-  if (draft && draft.text.trim() && draft.text !== WELCOME_DOC) {
+  void (async () => {
+    const draft = loadDraft()
+    if (!draft || !draft.text.trim() || draft.text === WELCOME_DOC) return
     const when = new Date(draft.savedAt).toLocaleString()
-    const ok = window.confirm(
-      `发现上次未保存的草稿「${draft.name}」（${when}）。恢复它吗？\n选择「否」将删除这份草稿。`,
-    )
-    if (ok) {
+    const restore = await showMessageModal({
+      title: '恢复未保存的草稿',
+      message: `发现上次未保存的草稿「${draft.name}」（${when}）。\n「恢复」将用它替换当前内容；「删除」将丢弃这份草稿。`,
+      confirmLabel: '恢复草稿',
+      cancelLabel: '删除草稿',
+    })
+    if (restore) {
       model.createUntitled(draft.name)
       model.setText(draft.text)
       flashNotice('已恢复上次未保存的草稿')
     } else {
       clearDraft()
     }
-  }
+  })()
 
   editor.focus()
 }
