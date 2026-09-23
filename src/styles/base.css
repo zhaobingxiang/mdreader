@@ -1,0 +1,100 @@
+:root {
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'Cascadia Code', Consolas, 'Courier New', monospace;
+
+  --bg-app: #f7f7f5;
+  --surface-1: #ffffff;
+  --surface-2: #fafaf9;
+  --surface-3: #f1f0ee;
+
+  --text-1: #1f2328;
+  --text-2: #59636e;
+  --text-3: #8b949e;
+
+  --border-1: #e6e5e3;
+  --border-2: #d1d9e0;
+
+  --accent: #0969da;
+  --accent-soft: #ddf4ff;
+  --accent-strong: #0550ae;
+
+  --danger: #cf222e;
+  --warn: #9a6700;
+  --ok: #1a7f37;
+
+  --editor-line-hl: #f6f8fa;
+  --editor-selection: #b6dbff;
+  --editor-match: #fdf0c8;
+  --editor-search: #ffe8a8;
+  --editor-search-sel: #ffc94d;
+
+  --shadow-1: 0 1px 2px rgba(31, 35, 40, 0.07);
+  --shadow-2: 0 10px 30px rgba(31, 35, 40, 0.14);
+
+  --reading-width: 760px;
+  --editor-font-size: 15px;
+
+  /* Markdown 语法高亮 */
+  --md-h1: #1f2328;
+  --md-h2: #1f2328;
+  --md-h3: #1f2328;
+  --md-h4: #3d444d;
+  --md-strong: #0f1419;
+  --md-em: #3d444d;
+  --md-dim: #8b949e;
+  --md-link: #0969da;
+  --md-code-fg: #a31515;
+  --md-code-bg: #f1f0ee;
+  --md-quote: #59636e;
+  --md-marker: #8250df;
+  --md-danger: #cf222e;
+
+  /* 代码 token */
+  --tok-keyword: #cf222e;
+  --tok-string: #0a3069;
+  --tok-number: #0550ae;
+  --tok-func: #8250df;
+  --tok-type: #953800;
+  --tok-op: #0550ae;
+  --tok-prop: #116329;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  color: var(--text-1);
+  background: var(--bg-app);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  height: 100vh;
+}
+
+/* 浏览器环境的缩放走内容字号——CSS zoom 会让 CM6 的选区矩形计算失准，
+   拖选时选区元素直接不渲染；桌面壳走 WebView2 的 ZoomFactor 做整体缩放 */
+:root {
+  --content-scale: 1;
+  --editor-font-size: calc(15px * var(--content-scale));
+}
+
+button {
+  font-family: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

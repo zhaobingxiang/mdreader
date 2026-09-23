@@ -1,0 +1,373 @@
+/* ---------- 代码块 ---------- */
+
+.md-code {
+  position: relative;
+  border: 1px solid var(--border-1);
+  border-radius: 10px;
+  background: #f6f8fa;
+  overflow: hidden;
+}
+
+.md-code__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px 5px 12px;
+  border-bottom: 1px solid var(--border-1);
+  background: var(--surface-3);
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.md-code__lang {
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+
+.md-code__meta {
+  color: var(--text-3);
+}
+
+.md-code.is-collapsible .md-code__meta {
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+
+.md-code__btn {
+  margin-left: auto;
+  border: none;
+  background: none;
+  padding: 2px 8px;
+  border-radius: 5px;
+  font-size: 12px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.md-code__btn:hover {
+  background: var(--surface-1);
+  color: var(--text-1);
+}
+
+.md-code__btn.is-ok {
+  color: var(--ok);
+}
+
+.md-code__pre {
+  margin: 0;
+  padding: 12px 14px;
+  overflow: auto;
+}
+
+.md-code__pre code {
+  padding: 0;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.md-code.is-collapsible:not(.is-expanded) .md-code__pre {
+  max-height: 330px;
+  overflow: hidden;
+}
+
+.md-code.is-collapsible:not(.is-expanded)::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 62px;
+  background: linear-gradient(to bottom, rgba(246, 248, 250, 0), #f6f8fa);
+  pointer-events: none;
+}
+
+/* ---------- 表格 ---------- */
+
+.md-table-wrap {
+  overflow-x: auto;
+}
+
+.md-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.md-table th,
+.md-table td {
+  padding: 7px 12px;
+  border: 1px solid var(--border-1);
+  text-align: left;
+}
+
+.md-table th {
+  background: var(--surface-3);
+  font-weight: 600;
+}
+
+.md-table td {
+  vertical-align: top;
+}
+
+.md-table--nohead tbody tr:first-child {
+  background: var(--surface-3);
+  font-weight: 600;
+}
+
+/* ---------- Callout ---------- */
+
+.md-callout {
+  margin: 1.1em 0;
+  padding: 0.85em 1.05em;
+  border-left: 3px solid var(--accent);
+  border-radius: 9px;
+  background: var(--accent-soft);
+}
+
+.md-callout::before {
+  display: block;
+  margin-bottom: 0.35em;
+  font-size: 0.86em;
+  font-weight: 600;
+  color: var(--accent-strong);
+  content: attr(data-callout-title);
+}
+
+.md-callout > *:last-child {
+  margin-bottom: 0;
+}
+
+.md-callout[data-callout='warning'],
+.md-callout[data-callout='caution'] {
+  border-left-color: var(--warn);
+  background: #fff8e5;
+}
+
+.md-callout[data-callout='warning']::before,
+.md-callout[data-callout='caution']::before {
+  color: #7a5c00;
+}
+
+.md-callout[data-callout='danger'],
+.md-callout[data-callout='error'] {
+  border-left-color: var(--danger);
+  background: #ffebe9;
+}
+
+.md-callout[data-callout='danger']::before,
+.md-callout[data-callout='error']::before {
+  color: #a40e26;
+}
+
+.md-callout[data-callout='tip'],
+.md-callout[data-callout='success'],
+.md-callout[data-callout='important'] {
+  border-left-color: var(--ok);
+  background: #e8f5ec;
+}
+
+.md-callout[data-callout='tip']::before,
+.md-callout[data-callout='success']::before,
+.md-callout[data-callout='important']::before {
+  color: #14532d;
+}
+
+/* ---------- 任务列表 ---------- */
+
+.md-task-list {
+  padding-left: 0.2em;
+  list-style: none;
+}
+
+.md-task {
+  list-style: none;
+}
+
+.md-task p {
+  margin: 0;
+}
+
+.md-task__box {
+  margin-right: 0.5em;
+  vertical-align: middle;
+  accent-color: var(--accent);
+}
+
+.md-task.is-done > p {
+  color: var(--text-2);
+}
+
+/* ---------- Mermaid / 嵌入块 ---------- */
+
+.md-embed {
+  padding: 14px;
+  border: 1px solid var(--border-1);
+  border-radius: 10px;
+  background: var(--surface-1);
+  overflow-x: auto;
+  text-align: center;
+}
+
+.md-embed--mermaid {
+  min-height: 58px;
+}
+
+.md-embed svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.md-embed__hint {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.md-embed__error {
+  font-size: 13px;
+  color: var(--danger);
+  text-align: left;
+}
+
+.md-embed__source {
+  margin: 8px 0 0;
+  padding: 10px;
+  border-radius: 8px;
+  background: #f6f8fa;
+  text-align: left;
+  overflow: auto;
+}
+
+/* ---------- 图片放大 ---------- */
+
+.md-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: rgba(15, 20, 25, 0.82);
+  cursor: zoom-out;
+}
+
+.md-lightbox img {
+  max-width: 100%;
+  max-height: 86vh;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.md-lightbox__hint {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.76);
+}
+
+/* ---------- 差异审阅弹窗 ---------- */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 180;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  background: rgba(15, 20, 25, 0.42);
+}
+
+.modal__panel {
+  display: flex;
+  flex-direction: column;
+  width: min(920px, 100%);
+  max-height: 100%;
+  border-radius: 14px;
+  background: var(--surface-1);
+  box-shadow: var(--shadow-2);
+  overflow: hidden;
+}
+
+.modal__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-1);
+}
+
+.modal__title {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.modal__stat {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.modal__stat .is-add {
+  color: var(--ok);
+}
+
+.modal__stat .is-del {
+  color: var(--danger);
+}
+
+.modal__head .btn {
+  margin-left: auto;
+}
+
+.modal__body {
+  flex: 1;
+  padding: 12px 16px;
+  background: var(--surface-2);
+  overflow: auto;
+}
+
+.modal__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-1);
+}
+
+.diff {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.diff__line {
+  display: flex;
+  gap: 10px;
+  padding: 0 6px;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.diff__line--add {
+  background: #e6ffec;
+  color: #14532d;
+}
+
+.diff__line--del {
+  background: #ffebe9;
+  color: #7d2028;
+}
+
+.diff__sign {
+  flex: none;
+  width: 10px;
+  color: var(--text-3);
+}
+
+.diff__text {
+  flex: 1;
+}

@@ -1,0 +1,192 @@
+.markdown-body {
+  max-width: min(var(--reading-width), 100%);
+  margin: 0 auto;
+  padding: 26px clamp(16px, 2.4vw, 32px) 45vh;
+  font-size: calc(15px * var(--content-scale, 1));
+  line-height: 1.78;
+  color: var(--text-1);
+  overflow-wrap: break-word;
+}
+
+.markdown-body > *:first-child {
+  margin-top: 0;
+}
+
+/* 滚动同步锚点：跳转时留出一点呼吸空间 */
+.markdown-body [data-line] {
+  scroll-margin-top: 16px;
+}
+
+.md-block {
+  margin: 1.1em 0;
+}
+
+/* ---------- 标题 ---------- */
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  line-height: 1.32;
+  color: var(--md-h1);
+  scroll-margin-top: 16px;
+}
+
+.markdown-body h1 {
+  margin: 1.6em 0 0.6em;
+  padding-bottom: 0.32em;
+  border-bottom: 1px solid var(--border-1);
+  font-size: 1.9em;
+}
+
+.markdown-body h2 {
+  margin: 1.6em 0 0.6em;
+  padding-bottom: 0.26em;
+  border-bottom: 1px solid var(--border-1);
+  font-size: 1.48em;
+}
+
+.markdown-body h3 {
+  margin: 1.4em 0 0.5em;
+  font-size: 1.24em;
+}
+
+.markdown-body h4 {
+  margin: 1.25em 0 0.45em;
+  font-size: 1.08em;
+  color: var(--md-h4);
+}
+
+.markdown-body h5,
+.markdown-body h6 {
+  margin: 1.2em 0 0.4em;
+  font-size: 1em;
+  color: var(--text-2);
+}
+
+/* ---------- 文本 ---------- */
+
+.markdown-body p {
+  margin: 0 0 1.05em;
+}
+
+.markdown-body strong {
+  color: var(--md-strong);
+}
+
+.markdown-body em {
+  color: var(--md-em);
+}
+
+.markdown-body del {
+  color: var(--md-dim);
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0 0 1.05em;
+  padding-left: 1.6em;
+}
+
+.markdown-body li {
+  margin: 0.25em 0;
+}
+
+.markdown-body li > ul,
+.markdown-body li > ol {
+  margin: 0.25em 0;
+}
+
+.markdown-body li::marker {
+  color: var(--md-marker);
+}
+
+.md-quote {
+  margin: 1.1em 0;
+  padding: 0.1em 1.1em;
+  border-left: 3px solid var(--border-2);
+  color: var(--md-quote);
+}
+
+.md-quote > *:last-child {
+  margin-bottom: 0;
+}
+
+.md-hr {
+  margin: 2.2em 0;
+  border: none;
+  border-top: 1px solid var(--border-1);
+}
+
+/* ---------- 链接 ---------- */
+
+.md-link {
+  color: var(--md-link);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+
+.md-link:hover {
+  border-bottom-color: currentColor;
+}
+
+.md-link--external::after {
+  content: '↗';
+  margin-left: 2px;
+  font-size: 0.78em;
+  opacity: 0.65;
+}
+
+.md-link--anchor {
+  color: var(--text-2);
+}
+
+/* ---------- 代码 ---------- */
+
+.md-code-inline {
+  padding: 0.15em 0.38em;
+  border-radius: 5px;
+  background: var(--md-code-bg);
+  color: var(--md-code-fg);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  /* 兜底：万一出现嵌套，不允许再相乘 */
+  white-space: break-spaces;
+}
+
+.md-code-inline .md-code-inline {
+  font-size: 1em;
+}
+
+/* ---------- 图片 ---------- */
+
+.md-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0.4em 0;
+  border-radius: 8px;
+  cursor: zoom-in;
+}
+
+.md-image.is-broken {
+  min-height: 42px;
+  border: 1px dashed var(--danger);
+  background: #fff5f5;
+}
+
+/* ---------- 公式 ---------- */
+
+.md-math--block {
+  padding: 4px 0;
+  overflow-x: auto;
+  text-align: center;
+}
+
+.md-math__error {
+  color: var(--danger);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}

@@ -1,0 +1,809 @@
+.app {
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  /* 列宽必须可收缩：grid 子项的 min-width:auto 会让内容的最小宽度
+     （比如预览里的长代码行）把整个界面撑出视口，顶栏跟着溢出，
+     导出按钮就被裁成半截 */
+  grid-template-columns: minmax(0, 1fr);
+  --editor-width: 50%;
+}
+
+/* ---------- 顶栏 ---------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.topbar__group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* 组内元素一律不压缩——否则窗口较窄时右侧的按钮会被裁成半截 */
+  flex: none;
+}
+
+.topbar__group--start {
+  /* 只有左组允许收缩：溢出时优先裁文件名（带省略号），保住功能按钮 */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.topbar__group--end {
+  margin-left: auto;
+}
+
+.topbar .btn,
+.topbar .zoom,
+.topbar .menu {
+  flex: none;
+}
+
+.doc-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 6px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.doc-title__name {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-title__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+  flex: none;
+}
+
+.btn {
+  border: 1px solid var(--border-1);
+  background: var(--surface-1);
+  color: var(--text-1);
+  padding: 5px 12px;
+  border-radius: 7px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover {
+  border-color: var(--border-2);
+  background: var(--surface-3);
+}
+
+.btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.btn--primary:hover {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+.btn--small {
+  padding: 3px 9px;
+  font-size: 12px;
+}
+
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  margin: 0 auto;
+  padding: 3px;
+  border-radius: 9px;
+  background: var(--surface-3);
+}
+
+.segmented__item {
+  border: none;
+  background: transparent;
+  padding: 5px 18px;
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.segmented__item.is-active {
+  background: var(--surface-1);
+  color: var(--text-1);
+  font-weight: 500;
+  box-shadow: var(--shadow-1);
+}
+
+.menu {
+  position: relative;
+}
+
+.menu__list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: 5px;
+  border: 1px solid var(--border-1);
+  border-radius: 10px;
+  background: var(--surface-1);
+  box-shadow: var(--shadow-2);
+}
+
+.menu__list[hidden] {
+  display: none;
+}
+
+.menu__item {
+  border: none;
+  background: none;
+  padding: 7px 10px;
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--text-1);
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu__item:hover {
+  background: var(--surface-3);
+}
+
+.btn--icon {
+  width: 28px;
+  padding: 5px 0;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.btn--icon:hover {
+  background: var(--surface-3);
+}
+
+/* ---------- 缩放控件 ---------- */
+
+.zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  border: 1px solid var(--border-1);
+  border-radius: 7px;
+  background: var(--surface-1);
+}
+
+.zoom__btn {
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: none;
+  border-radius: 5px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.zoom__btn:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.zoom__value {
+  min-width: 48px;
+  height: 22px;
+  border: none;
+  background: none;
+  border-radius: 5px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.zoom__value:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.zoom__input {
+  width: 48px;
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  background: var(--surface-1);
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-1);
+  text-align: center;
+  outline: none;
+  appearance: textfield;
+}
+
+.zoom__input::-webkit-outer-spin-button,
+.zoom__input::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+/* ---------- 外部变更提示条 ---------- */
+
+.external-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 14px;
+  background: #fff8e5;
+  border-bottom: 1px solid #f0d58c;
+  font-size: 13px;
+  color: #7a5c00;
+}
+
+.external-banner[hidden] {
+  display: none;
+}
+
+.external-banner__actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* ---------- 工作区 ---------- */
+
+.workspace {
+  display: flex;
+  min-height: 0;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface-1);
+}
+
+.pane--editor {
+  flex: 1 1 0;
+  border-right: 1px solid var(--border-1);
+}
+
+.pane--preview {
+  flex: 1 1 0;
+  overflow: auto;
+  scroll-behavior: auto;
+}
+
+.pane__host {
+  flex: 1;
+  min-height: 0;
+}
+
+.pane__host .cm-editor {
+  height: 100%;
+}
+
+.splitter {
+  position: relative;
+  width: 6px;
+  flex: none;
+  cursor: col-resize;
+  background: var(--surface-1);
+}
+
+.splitter[hidden] {
+  display: none;
+}
+
+.splitter::after {
+  content: '';
+  position: absolute;
+  inset: 0 2px;
+  border-radius: 2px;
+}
+
+.splitter:hover::after {
+  background: var(--accent);
+  opacity: 0.3;
+}
+
+body.is-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.app[data-mode='edit'] .pane--preview,
+.app[data-mode='edit'] .splitter,
+.app[data-mode='preview'] .pane--editor,
+.app[data-mode='preview'] .splitter {
+  display: none;
+}
+
+/* 分屏时两侧等分「剩余」空间。
+   注意：不能直接用 flex-basis: 50%，那会按 flex 容器总宽计算，
+   编辑区会吃掉预览区的份额。 */
+.app[data-mode='split'] .pane--editor {
+  flex: 1 1 0;
+}
+
+/* 手动拖动分栏后才锁死宽度 */
+.app[data-mode='split'].is-resized .pane--editor {
+  flex: 0 0 var(--editor-width, 50%);
+}
+
+/* ---------- 侧栏 ---------- */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  min-height: 0;
+  background: var(--surface-2);
+  overflow: hidden;
+  transition: width 0.16s ease;
+}
+
+.panel--left {
+  width: 240px;
+  border-right: 1px solid var(--border-1);
+}
+
+.panel--right {
+  width: 282px;
+  border-left: 1px solid var(--border-1);
+}
+
+.panel.is-collapsed {
+  width: 0;
+  border: none;
+}
+
+.panel__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-1);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.panel__action {
+  margin-left: auto;
+  border: 1px solid var(--border-1);
+  background: var(--surface-1);
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--accent-strong);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.panel__action:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.panel__action[hidden] {
+  display: none;
+}
+
+.panel__empty {
+  padding: 18px 12px;
+  font-size: 12px;
+  color: var(--text-3);
+  text-align: center;
+}
+
+.panel__badge {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+.panel__badge.is-ok {
+  color: var(--ok);
+}
+
+.panel__badge.is-warn {
+  color: var(--warn);
+}
+
+.panel__badge.is-error {
+  color: var(--danger);
+}
+
+/* 大纲 */
+
+.outline {
+  flex: 1;
+  padding: 6px;
+  overflow: auto;
+}
+
+.outline__item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 5px 8px 5px calc(8px + var(--indent, 0) * 12px);
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.outline__item:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.outline__item.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 500;
+}
+
+.outline__mark {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.outline__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 书写提示 */
+
+.hint-list {
+  flex: 1;
+  padding: 6px;
+  overflow: auto;
+}
+
+.hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 1px 4px 1px 0;
+  border-left: 3px solid transparent;
+  border-radius: 7px;
+}
+
+.hint:hover {
+  background: var(--surface-3);
+}
+
+.hint__main {
+  display: flex;
+  flex: 1;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 6px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.hint__fix {
+  flex: none;
+  align-self: center;
+  margin-right: 3px;
+  padding: 2px 7px;
+  border: 1px solid var(--border-1);
+  border-radius: 5px;
+  background: var(--surface-1);
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--accent-strong);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.hint__fix:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.hint--error {
+  border-left-color: var(--danger);
+}
+
+.hint--warning {
+  border-left-color: var(--warn);
+}
+
+.hint--info {
+  border-left-color: var(--accent);
+}
+
+.hint__line {
+  flex: none;
+  min-width: 22px;
+  font-family: var(--font-mono);
+  color: var(--text-3);
+  text-align: right;
+}
+
+.hint__msg {
+  line-height: 1.5;
+}
+
+/* 待办 */
+
+.hint-todos {
+  max-height: 42%;
+  padding: 8px;
+  border-top: 1px solid var(--border-1);
+  overflow: auto;
+}
+
+.hint-todos:empty {
+  display: none;
+}
+
+.hint-todos__head {
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.todo {
+  display: flex;
+  gap: 7px;
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.todo:hover {
+  background: var(--surface-3);
+}
+
+.todo.is-done {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+
+.todo__box {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  border: 1px solid var(--border-2);
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 12px;
+  text-align: center;
+}
+
+/* ---------- 状态栏 ---------- */
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 14px;
+  background: var(--surface-1);
+  border-top: 1px solid var(--border-1);
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.statusbar__left,
+.statusbar__right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.statusbar__item:empty {
+  display: none;
+}
+
+.statusbar__item {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.statusbar__item--mono {
+  font-family: var(--font-mono);
+}
+
+/* 桌面壳里点状态栏路径可在资源管理器中定位 */
+.statusbar__item[data-role='stat-path'] {
+  cursor: pointer;
+}
+
+.statusbar__item[data-role='stat-path']:hover {
+  color: var(--text-1);
+  text-decoration: underline;
+}
+
+/* ---------- 拖放提示 ---------- */
+
+.drop-hint {
+  position: fixed;
+  inset: 18px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--accent);
+  border-radius: 16px;
+  background: rgba(9, 105, 218, 0.06);
+  font-size: 15px;
+  color: var(--accent-strong);
+  pointer-events: none;
+}
+
+.drop-hint[hidden] {
+  display: none;
+}
+
+@media (max-width: 1180px) {
+  .panel--left {
+    width: 200px;
+  }
+  .panel--right {
+    width: 240px;
+  }
+}
+
+/* ---------- 定位高亮（书写提示定位 / 分屏选区同步） ---------- */
+
+/* 拖选底色用浏览器原生 ::selection（编辑器已移除 drawSelection 自绘）。
+   原生选区和 txt/word 一样，任何缩放 / DPI 环境下都可靠。
+   注意 CM6 baseTheme 会把行内 ::selection 设为 transparent（配合自绘选区），
+   且其样式运行时注入晚于静态 CSS，所以这里要同结构 + !important 压回 */
+.app .cm-content .cm-line::selection,
+.app .cm-content .cm-line > *::selection,
+.app .cm-content .cm-line > * > *::selection {
+  background-color: var(--editor-selection) !important;
+}
+
+/* 编辑区：整行底色 + 文字底纹。
+   用双类选择器压过 CM6 主题里的 .cm-activeLine */
+.cm-line.cm-hl-line--error {
+  background-color: rgba(207, 34, 46, 0.09);
+}
+
+.cm-line.cm-hl-line--warning {
+  background-color: rgba(154, 103, 0, 0.1);
+}
+
+.cm-line.cm-hl-line--info {
+  background-color: rgba(9, 105, 218, 0.08);
+}
+
+.cm-line.cm-hl-line--selection {
+  background-color: rgba(130, 80, 223, 0.1);
+}
+
+.cm-hl-text {
+  border-radius: 3px;
+}
+
+span.cm-hl-text--error {
+  background-color: rgba(207, 34, 46, 0.24);
+}
+
+span.cm-hl-text--warning {
+  background-color: rgba(154, 103, 0, 0.26);
+}
+
+span.cm-hl-text--info {
+  background-color: rgba(9, 105, 218, 0.2);
+}
+
+span.cm-hl-text--selection {
+  background-color: rgba(130, 80, 223, 0.22);
+}
+
+/* 预览区：整块底色 + 左侧色条（都不改变布局，避免内容跳动） */
+.markdown-body .is-hl-error,
+.markdown-body .is-hl-warning,
+.markdown-body .is-hl-info,
+.markdown-body .is-hl-selection {
+  border-radius: 8px;
+  outline: 1px solid transparent;
+  outline-offset: 3px;
+  transition: background-color 0.16s ease;
+}
+
+.markdown-body .is-hl-error {
+  background-color: rgba(207, 34, 46, 0.1);
+  box-shadow: inset 3px 0 0 var(--danger);
+  outline-color: rgba(207, 34, 46, 0.28);
+}
+
+.markdown-body .is-hl-warning {
+  background-color: rgba(154, 103, 0, 0.11);
+  box-shadow: inset 3px 0 0 var(--warn);
+  outline-color: rgba(154, 103, 0, 0.28);
+}
+
+.markdown-body .is-hl-info {
+  background-color: rgba(9, 105, 218, 0.09);
+  box-shadow: inset 3px 0 0 var(--accent);
+  outline-color: rgba(9, 105, 218, 0.26);
+}
+
+.markdown-body .is-hl-selection {
+  background-color: rgba(130, 80, 223, 0.11);
+  box-shadow: inset 3px 0 0 #8250df;
+  outline-color: rgba(130, 80, 223, 0.26);
+}
+
+@media (max-width: 900px) {
+  .panel--left,
+  .panel--right {
+    display: none;
+  }
+}
+
+@media print {
+  .topbar,
+  .panel,
+  .splitter,
+  .statusbar,
+  .external-banner,
+  .drop-hint,
+  .pane--editor,
+  .md-code__bar {
+    display: none !important;
+  }
+  .app[data-mode] .pane--preview {
+    display: block !important;
+    overflow: visible;
+    flex: 1 1 auto;
+  }
+  .markdown-body {
+    padding: 0;
+    max-width: none;
+  }
+}

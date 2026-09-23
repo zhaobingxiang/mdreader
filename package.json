@@ -1,0 +1,39 @@
+{
+  "name": "mdreader",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Markdown 阅读器 —— 三态视图 + 渲染注册表 + 四层书写提示",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "smoke": "node scripts/smoke.cjs"
+  },
+  "dependencies": {
+    "@codemirror/autocomplete": "^6.20.3",
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/language-data": "^6.5.2",
+    "@codemirror/lint": "^6.9.7",
+    "@codemirror/search": "^6.7.2",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.13",
+    "@lezer/highlight": "^1.2.3",
+    "dompurify": "^3.4.15",
+    "highlight.js": "^11.12.0",
+    "katex": "^0.18.7",
+    "markdown-it": "^15.0.2",
+    "mermaid": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.2.0",
+    "playwright-core": "^1.63.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.1"
+  }
+}

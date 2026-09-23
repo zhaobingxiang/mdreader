@@ -1,0 +1,20 @@
+node_modules
+dist
+dist-ssr
+*.local
+.DS_Store
+src-tauri/target
+.vite
+.preview
+
+# .NET 桌面壳
+desktop/bin
+desktop/obj
+desktop/publish
+
+# Inno Setup 产物
+release
+
+# 旧版打包快照 / 工作笔记（均为本机临时产物）
+mdreader-final
+.workbuddy
