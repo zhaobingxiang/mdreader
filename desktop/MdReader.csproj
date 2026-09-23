@@ -30,4 +30,55 @@
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
   </ItemGroup>
 
+  <!--
+    自包含发布会把整个 WindowsDesktop 运行时包复制出来，其中 WPF 那 ~40MB
+    对本项目（纯 WinForms）完全无用：CLR 按需加载，删了不影响任何功能路径。
+    设计期程序集（*.Forms.Design*）与 NuGet 文档 xml 同理，运行时不会触碰。
+    若将来引入依赖 WPF 的代码，需同步移除对应删除项。
+  -->
+  <Target Name="TrimWpfFromPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <_PublishJunk Include="$(PublishDir)PresentationCore.dll;
+        $(PublishDir)PresentationFramework.dll;
+        $(PublishDir)PresentationFramework.Aero.dll;
+        $(PublishDir)PresentationFramework.Aero2.dll;
+        $(PublishDir)PresentationFramework.AeroLite.dll;
+        $(PublishDir)PresentationFramework.Classic.dll;
+        $(PublishDir)PresentationFramework.Luna.dll;
+        $(PublishDir)PresentationFramework.Royale.dll;
+        $(PublishDir)PresentationFramework-SystemCore.dll;
+        $(PublishDir)PresentationFramework-SystemData.dll;
+        $(PublishDir)PresentationFramework-SystemDrawing.dll;
+        $(PublishDir)PresentationFramework-SystemXml.dll;
+        $(PublishDir)PresentationFramework-SystemXmlLinq.dll;
+        $(PublishDir)PresentationUI.dll;
+        $(PublishDir)PresentationFontCache.exe;
+        $(PublishDir)ReachFramework.dll;
+        $(PublishDir)System.Printing.dll;
+        $(PublishDir)System.Windows.Controls.Ribbon.dll;
+        $(PublishDir)System.Windows.Input.Manipulations.dll;
+        $(PublishDir)System.Windows.Presentation.dll;
+        $(PublishDir)System.Windows.dll;
+        $(PublishDir)System.Xaml.dll;
+        $(PublishDir)WindowsBase.dll;
+        $(PublishDir)UIAutomationClient.dll;
+        $(PublishDir)UIAutomationClientSideProviders.dll;
+        $(PublishDir)UIAutomationProvider.dll;
+        $(PublishDir)UIAutomationTypes.dll;
+        $(PublishDir)DirectWriteForwarder.dll;
+        $(PublishDir)PresentationNative_cor3.dll;
+        $(PublishDir)wpfgfx_cor3.dll;
+        $(PublishDir)D3DCompiler_47_cor3.dll;
+        $(PublishDir)System.Design.dll;
+        $(PublishDir)System.Windows.Forms.Design.dll;
+        $(PublishDir)System.Windows.Forms.Design.Editors.dll;
+        $(PublishDir)Microsoft.Web.WebView2.Wpf.dll;
+        $(PublishDir)Microsoft.Web.WebView2.Wpf.xml;
+        $(PublishDir)Microsoft.Web.WebView2.Core.xml;
+        $(PublishDir)Microsoft.Web.WebView2.WinForms.xml" />
+    </ItemGroup>
+    <Delete Files="@(_PublishJunk)" />
+    <Message Importance="high" Text="已从发布目录剔除 WPF / 设计期程序集" />
+  </Target>
+
 </Project>
