@@ -31,6 +31,16 @@ internal sealed class HostBridge : IDisposable
     private readonly HashSet<string> _allowedPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly Queue<string> _pendingOpen = new();
 
+    /// <summary>最近打开的文件（MRU），落盘在 LocalAppData，供「打开」下拉快速回访</summary>
+    private readonly List<string> _recent = new();
+    private bool _recentLoaded;
+    private const int RecentMax = 8;
+
+    private static string RecentFilePath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "mdreader",
+        "recent.json");
+
     private bool _ready;
     private bool _disposed;
     private bool _dirty;
@@ -139,6 +149,15 @@ internal sealed class HostBridge : IDisposable
                 case "reveal":
                     HandleReveal(message);
                     Reply(id, new JsonObject { ["ok"] = true });
+                    break;
+                case "print":
+                    HandlePrint(id);
+                    break;
+                case "recent":
+                    Reply(id, RecentPayload());
+                    break;
+                case "openRecent":
+                    HandleOpenRecent(id, message);
                     break;
                 default:
                     ReplyError(id, $"未知指令：{action}");
@@ -319,10 +338,124 @@ internal sealed class HostBridge : IDisposable
         }
     }
 
+    // ---------- 打印 / 最近文件 ----------
+
+    private void HandlePrint(int id)
+    {
+        // 先回包：系统打印对话框会阻塞到用户操作完成，不能让前端干等
+        Reply(id, new JsonObject { ["ok"] = true });
+        if (!_form.IsHandleCreated) return;
+
+        _form.BeginInvoke((Action)(() =>
+        {
+            try
+            {
+                var core = _web.CoreWebView2;
+                if (core == null) return;
+                // PrintAsync 是静默打印（直接进默认打印机），用户没机会选"另存为 PDF"；
+                // ShowPrintUI 弹打印预览界面，里面有"另存为 PDF"和系统打印机
+                core.ShowPrintUI(CoreWebView2PrintDialogKind.Browser);
+            }
+            catch (Exception ex)
+            {
+                // 打印失败要让用户知道，而不是点了没反应
+                Post(new JsonObject { ["event"] = "error", ["message"] = $"打印失败：{ex.Message}" });
+            }
+        }));
+    }
+
+    private void HandleOpenRecent(int id, JsonObject message)
+    {
+        var raw = message["path"]?.GetValue<string>() ?? string.Empty;
+        string path;
+        try
+        {
+            path = Path.GetFullPath(raw);
+        }
+        catch
+        {
+            ReplyError(id, "路径不合法");
+            return;
+        }
+
+        EnsureRecentLoaded();
+        // 只允许打开确实在最近列表里的路径，防止这一通道被当成任意文件读取器
+        if (!_recent.Any(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase)) ||
+            !File.Exists(path))
+        {
+            ReplyError(id, "该文件不在最近打开列表中");
+            return;
+        }
+
+        Reply(id, new JsonObject { ["ok"] = true });
+        OpenPath(path);
+    }
+
+    private JsonObject RecentPayload()
+    {
+        EnsureRecentLoaded();
+        var items = new JsonArray();
+        foreach (var p in _recent)
+        {
+            if (!File.Exists(p)) continue;
+            items.Add(new JsonObject { ["path"] = p, ["name"] = Path.GetFileName(p) });
+        }
+        return new JsonObject { ["items"] = items };
+    }
+
+    private void EnsureRecentLoaded()
+    {
+        if (_recentLoaded) return;
+        _recentLoaded = true;
+        try
+        {
+            if (!File.Exists(RecentFilePath)) return;
+            if (JsonNode.Parse(File.ReadAllText(RecentFilePath)) is not JsonArray arr) return;
+            foreach (var item in arr)
+            {
+                var p = item?.GetValue<string>();
+                if (!string.IsNullOrEmpty(p) && File.Exists(p) && _recent.Count < RecentMax)
+                {
+                    _recent.Add(p);
+                }
+            }
+        }
+        catch
+        {
+            // 列表损坏就当没有
+        }
+    }
+
+    private void RecordRecent(string path)
+    {
+        EnsureRecentLoaded();
+        _recent.RemoveAll(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
+        _recent.Insert(0, path);
+        while (_recent.Count > RecentMax)
+        {
+            _recent.RemoveAt(_recent.Count - 1);
+        }
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(RecentFilePath)!);
+            var arr = new JsonArray(_recent.Select(p => JsonValue.Create(p)).ToArray());
+            File.WriteAllText(RecentFilePath, arr.ToJsonString());
+        }
+        catch
+        {
+            // 写失败只影响下次启动的记忆
+        }
+    }
+
     // ---------- 路径授权 ----------
 
     /// <summary>只有经用户动作（启动参数、双击、打开/另存对话框）进过白名单的路径可读写</summary>
-    private void Authorize(string fullPath) => _allowedPaths.Add(fullPath);
+    private void Authorize(string fullPath)
+    {
+        _allowedPaths.Add(fullPath);
+        RecordRecent(fullPath);
+    }
 
     private bool IsAuthorized(string fullPath) => _allowedPaths.Contains(fullPath);
 

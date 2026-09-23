@@ -9,6 +9,20 @@
   --editor-width: 50%;
 }
 
+/* display:none 的子项不占隐式行：横幅隐藏时 workspace 会被挤进
+   第二行（auto），状态栏反而吃掉 1fr。显式钉死行号 */
+.external-banner {
+  grid-row: 2;
+}
+
+.workspace {
+  grid-row: 3;
+}
+
+.statusbar {
+  grid-row: 4;
+}
+
 /* ---------- 顶栏 ---------- */
 
 .topbar {

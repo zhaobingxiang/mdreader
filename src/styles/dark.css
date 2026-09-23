@@ -1,0 +1,176 @@
+/* 深色主题：只覆盖颜色变量与少量写死颜色的规则，布局一律复用浅色样式 */
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg-app: #0d1117;
+  --surface-1: #161b22;
+  --surface-2: #10151c;
+  --surface-3: #21262d;
+
+  --text-1: #e6edf3;
+  --text-2: #9198a1;
+  --text-3: #6e7681;
+
+  --border-1: #30363d;
+  --border-2: #444c56;
+
+  --accent: #4493f8;
+  --accent-soft: #12304d;
+  --accent-strong: #74c3ff;
+
+  --danger: #f85149;
+  --warn: #d29922;
+  --ok: #3fb950;
+
+  --editor-line-hl: #1c2128;
+  --editor-selection: #1f4b8e;
+  --editor-match: rgba(210, 153, 34, 0.35);
+  --editor-search: rgba(210, 153, 34, 0.28);
+  --editor-search-sel: rgba(210, 153, 34, 0.55);
+
+  --shadow-1: 0 1px 2px rgba(1, 4, 9, 0.7);
+  --shadow-2: 0 10px 30px rgba(1, 4, 9, 0.8);
+
+  --code-bg: #161b22;
+
+  /* Markdown 语法高亮 */
+  --md-h1: #e6edf3;
+  --md-h2: #e6edf3;
+  --md-h3: #e6edf3;
+  --md-h4: #c9d1d9;
+  --md-strong: #f0f6fc;
+  --md-em: #c9d1d9;
+  --md-dim: #6e7681;
+  --md-link: #4493f8;
+  --md-code-fg: #a5d6ff;
+  --md-code-bg: #262d36;
+  --md-quote: #9198a1;
+  --md-marker: #d2a8ff;
+  --md-danger: #f85149;
+
+  /* 代码 token */
+  --tok-keyword: #ff7b72;
+  --tok-string: #a5d6ff;
+  --tok-number: #79c0ff;
+  --tok-func: #d2a8ff;
+  --tok-type: #ffa657;
+  --tok-op: #ff7b72;
+  --tok-prop: #79c0ff;
+}
+
+/* ---------- 浅色下写死颜色的规则，逐一给出深色版本 ---------- */
+
+:root[data-theme='dark'] .md-callout[data-callout='warning'],
+:root[data-theme='dark'] .md-callout[data-callout='caution'] {
+  background: #2d250e;
+}
+
+:root[data-theme='dark'] .md-callout[data-callout='warning']::before,
+:root[data-theme='dark'] .md-callout[data-callout='caution']::before {
+  color: #e3b341;
+}
+
+:root[data-theme='dark'] .md-callout[data-callout='danger'],
+:root[data-theme='dark'] .md-callout[data-callout='error'] {
+  background: #3d1d20;
+}
+
+:root[data-theme='dark'] .md-callout[data-callout='danger']::before,
+:root[data-theme='dark'] .md-callout[data-callout='error']::before {
+  color: #ffa198;
+}
+
+:root[data-theme='dark'] .md-callout[data-callout='tip'],
+:root[data-theme='dark'] .md-callout[data-callout='success'],
+:root[data-theme='dark'] .md-callout[data-callout='important'] {
+  background: #12261c;
+}
+
+:root[data-theme='dark'] .md-callout[data-callout='tip']::before,
+:root[data-theme='dark'] .md-callout[data-callout='success']::before,
+:root[data-theme='dark'] .md-callout[data-callout='important']::before {
+  color: #7ee787;
+}
+
+:root[data-theme='dark'] .diff__line--add {
+  background: #12261f;
+  color: #7ee787;
+}
+
+:root[data-theme='dark'] .diff__line--del {
+  background: #301114;
+  color: #ffa198;
+}
+
+:root[data-theme='dark'] .external-banner {
+  background: #2d250e;
+  border-bottom-color: #4d3d10;
+  color: #e3b341;
+}
+
+:root[data-theme='dark'] .md-image.is-broken {
+  background: #301b1b;
+}
+
+/* highlight.js 官方 github.css 只有浅色版，这里把常用 token 映射回主题变量 */
+:root[data-theme='dark'] .hljs-comment,
+:root[data-theme='dark'] .hljs-quote {
+  color: var(--text-3);
+}
+
+:root[data-theme='dark'] .hljs-keyword,
+:root[data-theme='dark'] .hljs-selector-tag,
+:root[data-theme='dark'] .hljs-literal,
+:root[data-theme='dark'] .hljs-doctag,
+:root[data-theme='dark'] .hljs-formula {
+  color: var(--tok-keyword);
+}
+
+:root[data-theme='dark'] .hljs-string,
+:root[data-theme='dark'] .hljs-regexp,
+:root[data-theme='dark'] .hljs-addition,
+:root[data-theme='dark'] .hljs-attribute,
+:root[data-theme='dark'] .hljs-meta .hljs-string {
+  color: var(--tok-string);
+}
+
+:root[data-theme='dark'] .hljs-number,
+:root[data-theme='dark'] .hljs-bullet,
+:root[data-theme='dark'] .hljs-link,
+:root[data-theme='dark'] .hljs-meta,
+:root[data-theme='dark'] .hljs-symbol {
+  color: var(--tok-number);
+}
+
+:root[data-theme='dark'] .hljs-title,
+:root[data-theme='dark'] .hljs-title.function_,
+:root[data-theme='dark'] .hljs-section,
+:root[data-theme='dark'] .hljs-template-variable {
+  color: var(--tok-func);
+}
+
+:root[data-theme='dark'] .hljs-type,
+:root[data-theme='dark'] .hljs-class .hljs-title,
+:root[data-theme='dark'] .hljs-title.class_ {
+  color: var(--tok-type);
+}
+
+:root[data-theme='dark'] .hljs-attr,
+:root[data-theme='dark'] .hljs-variable,
+:root[data-theme='dark'] .hljs-selector-attr,
+:root[data-theme='dark'] .hljs-selector-pseudo,
+:root[data-theme='dark'] .hljs-built_in,
+:root[data-theme='dark'] .hljs-params {
+  color: var(--tok-prop);
+}
+
+:root[data-theme='dark'] .hljs-name,
+:root[data-theme='dark'] .hljs-tag,
+:root[data-theme='dark'] .hljs-selector-id,
+:root[data-theme='dark'] .hljs-selector-class {
+  color: #7ee787;
+}
+
+:root[data-theme='dark'] .hljs-deletion {
+  color: var(--danger);
+}

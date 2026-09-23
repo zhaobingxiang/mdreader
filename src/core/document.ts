@@ -145,7 +145,9 @@ export class MarkdownDocument {
 
   /** 保存；返回是否成功 */
   async save(): Promise<boolean> {
-    if (!this.writable) return this.saveAs()
+    // 内存句柄（新建 / 拖入且未落盘）没有真实路径，直接写内存是「假保存」，
+    // 必须改走另存为拿一个真实路径
+    if (!this.writable || !this.handle.meta.path) return this.saveAs()
     try {
       this.selfWriteToken += 1
       await this.handle.write(this.text)

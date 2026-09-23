@@ -1,5 +1,6 @@
 import katexCss from 'katex/dist/katex.min.css?inline'
 import { escapeHtml } from '../render/util'
+import { callHost, isWebViewHost } from '../core/file/webview'
 
 /** 导出用的精简排版样式，不依赖应用主题变量 */
 const EXPORT_CSS = `
@@ -95,7 +96,15 @@ export async function copyMarkdown(source: string): Promise<void> {
   await navigator.clipboard.writeText(source)
 }
 
-/** 走浏览器打印，配合 @media print 样式输出 PDF */
-export function printPreview(): void {
+/**
+ * 打印 / 存为 PDF。
+ * WebView2 里 window.print() 是空操作，必须由宿主调 CoreWebView2.Print；
+ * 浏览器环境走原生打印。
+ */
+export async function printPreview(): Promise<void> {
+  if (isWebViewHost()) {
+    await callHost('print')
+    return
+  }
   window.print()
 }

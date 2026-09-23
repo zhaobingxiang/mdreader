@@ -3,6 +3,7 @@ import { undo, redo } from '@codemirror/commands'
 import { MarkdownDocument } from './core/document'
 import { fsAccessAdapter, isFsAccessSupported } from './core/file/fs-access'
 import {
+  callHost,
   createHostHandle,
   isWebViewHost,
   notifyTitle,
@@ -10,6 +11,8 @@ import {
   revealInExplorer,
   webviewAdapter,
 } from './core/file/webview'
+import { clearDraft, loadDraft, saveDraft } from './core/draft'
+import { toggleTheme } from './core/theme'
 import { collectTodos, computeStats } from './core/stats'
 import { ViewModeController, type ViewMode } from './core/view-mode'
 import { WELCOME_DOC } from './core/welcome'
@@ -22,7 +25,7 @@ import { copyMarkdown, copyRichText, exportHtml, printPreview } from './features
 import { createDefaultRegistry, MarkdownEngine, type OutlineNode } from './render/markdown'
 import { PreviewPipeline } from './render/pipeline'
 import { debounce } from './render/util'
-import { showDiffModal } from './ui/diff-view'
+import { showConfirmModal, showDiffModal } from './ui/diff-view'
 import { clearPreviewHighlight, highlightPreviewRange, mapPreviewSelection } from './ui/highlight'
 import { createLayout } from './ui/layout'
 import {
@@ -46,6 +49,76 @@ export function bootstrapApp(mount: HTMLElement): void {
   /** 跑在 .NET + WebView2 桌面壳里时，文件能力由宿主提供 */
   const inDesktopShell = isWebViewHost()
   model.setAdapter(inDesktopShell ? webviewAdapter : fsAccessAdapter)
+
+  // ---------- 状态提示与界面持久化 ----------
+
+  let noticeTimer = 0
+  /** 短暂提示：几秒后自动消失，避免状态栏被旧消息占住 */
+  function flashNotice(message: string | null): void {
+    model.setNotice(message)
+    window.clearTimeout(noticeTimer)
+    if (message) {
+      noticeTimer = window.setTimeout(() => model.setNotice(null), 4000)
+    }
+  }
+
+  /** 丢弃当前未保存修改前的确认。返回 false 表示用户取消 */
+  function confirmDiscard(): boolean {
+    if (!model.snapshot.dirty) return true
+    return window.confirm('当前文档有未保存的修改，继续将丢失这些改动。确定继续？')
+  }
+
+  interface UiState {
+    outlineCollapsed: boolean
+    hintsCollapsed: boolean
+    editorWidthPx: number | null
+  }
+
+  const UI_KEY = 'mdreader.ui'
+
+  function readUiState(): UiState | null {
+    try {
+      const raw = localStorage.getItem(UI_KEY)
+      if (!raw) return null
+      const parsed = JSON.parse(raw) as Partial<UiState>
+      return {
+        outlineCollapsed: !!parsed.outlineCollapsed,
+        hintsCollapsed: !!parsed.hintsCollapsed,
+        editorWidthPx: typeof parsed.editorWidthPx === 'number' ? parsed.editorWidthPx : null,
+      }
+    } catch {
+      return null
+    }
+  }
+
+  function saveUiState(): void {
+    try {
+      const widthRaw = layout.root.style.getPropertyValue('--editor-width')
+      const width = Number.parseInt(widthRaw, 10)
+      localStorage.setItem(
+        UI_KEY,
+        JSON.stringify({
+          outlineCollapsed: layout.outlinePanel.classList.contains('is-collapsed'),
+          hintsCollapsed: layout.hintPanel.classList.contains('is-collapsed'),
+          editorWidthPx: Number.isFinite(width) ? width : null,
+        } satisfies UiState),
+      )
+    } catch {
+      // 存储配额满 / 无痕模式下失败都不影响使用
+    }
+  }
+
+  // ---------- 草稿 ----------
+
+  const scheduleDraft = debounce(() => {
+    if (!model.snapshot.dirty) {
+      clearDraft()
+      return
+    }
+    const text = model.currentText
+    if (!text.trim()) return
+    saveDraft({ name: model.snapshot.name, path: '', text, savedAt: Date.now() })
+  }, 1200)
 
   /** 编辑器和滚动同步就绪标志。zoom 的 subscribe 会立即同步回调一次，
    *  它引用的 let 必须在此之前声明，否则回调会踩进暂时性死区 */
@@ -230,12 +303,15 @@ export function bootstrapApp(mount: HTMLElement): void {
       editor.resetDoc(model.currentText)
       scheduleRender()
       clearPreviewHighlight(layout.previewHost)
+      // 切文档必然先经过丢弃确认，旧文档的草稿就此作废
+      clearDraft()
       updateStatus()
       return
     }
     if (event.type === 'text') {
       if (editor.getText() !== model.currentText) editor.setText(model.currentText)
       scheduleRender()
+      scheduleDraft()
       return
     }
     if (event.type === 'external') {
@@ -244,6 +320,8 @@ export function bootstrapApp(mount: HTMLElement): void {
       return
     }
     layout.externalBanner.hidden = model.snapshot.pendingExternal === null
+    // 保存成功（dirty 被清掉）后草稿就没有意义了
+    if (!model.snapshot.dirty) clearDraft()
     updateStatus()
   })
 
@@ -253,6 +331,7 @@ export function bootstrapApp(mount: HTMLElement): void {
     onHostEvent((event) => {
       if (event.event === 'openFile') {
         // 双击 .md、启动参数、第二个实例的转发都走这里
+        if (!confirmDiscard()) return
         void model.open(createHostHandle(event))
       } else if (event.event === 'error') {
         model.setNotice(event.message)
@@ -290,16 +369,19 @@ export function bootstrapApp(mount: HTMLElement): void {
   // ---------- 文件操作 ----------
 
   async function openFile(): Promise<void> {
-    if (!isFsAccessSupported()) {
-      model.setNotice('当前浏览器不支持直接打开本地文件，请把文件拖进窗口')
+    if (!confirmDiscard()) return
+    if (inDesktopShell || isFsAccessSupported()) {
+      const opened = await model.openViaPicker()
+      if (opened) flashNotice('已打开')
       return
     }
-    await model.openViaPicker()
-    model.setNotice('已打开')
+    flashNotice('当前浏览器不支持直接打开本地文件，请把文件拖进窗口')
   }
 
   async function saveFile(): Promise<void> {
-    await model.save()
+    const ok = await model.save()
+    // 用模型刚写入的提示文案，同时重启自动消失计时
+    if (ok) flashNotice(model.snapshot.notice ?? '已保存')
   }
 
   // ---------- 顶栏与导出 ----------
@@ -352,19 +434,19 @@ export function bootstrapApp(mount: HTMLElement): void {
     switch (kind) {
       case 'html':
         exportHtml(layout.previewHost.innerHTML, name)
-        model.setNotice('已导出 HTML')
+        flashNotice('已导出 HTML')
         break
       case 'pdf':
-        printPreview()
+        await printPreview()
         break
       case 'rich': {
         const ok = await copyRichText(layout.previewHost.innerHTML, model.currentText)
-        model.setNotice(ok ? '已复制为富文本' : '浏览器不支持富文本剪贴板，已复制纯文本')
+        flashNotice(ok ? '已复制为富文本' : '浏览器不支持富文本剪贴板，已复制纯文本')
         break
       }
       case 'markdown':
         await copyMarkdown(model.currentText)
-        model.setNotice('已复制 Markdown 源码')
+        flashNotice('已复制 Markdown 源码')
         break
       default:
         break
@@ -381,26 +463,56 @@ export function bootstrapApp(mount: HTMLElement): void {
       return
     }
 
+    // 最近文件条目（路径只回给宿主做白名单校验，由宿主真正打开）
+    const recentItem = target.closest<HTMLElement>('[data-open-recent]')
+    if (recentItem) {
+      layout.openList.hidden = true
+      const path = recentItem.dataset.openRecent ?? ''
+      if (inDesktopShell && path) {
+        // 打开结果由宿主推送 openFile 事件回来，丢弃确认在那一步统一做
+        callHost('openRecent', { path }).catch((err: unknown) => {
+          model.setNotice(`打开失败：${(err as Error).message}`)
+        })
+      }
+      return
+    }
+
     const actionBtn = target.closest<HTMLElement>('[data-action]')
     if (!actionBtn) return
     switch (actionBtn.dataset.action) {
-      case 'open':
+      case 'open-menu': {
+        const willShow = layout.openList.hidden
+        layout.openList.hidden = !willShow
+        if (menuList) menuList.hidden = true
+        if (willShow) void fillOpenMenu()
+        break
+      }
+      case 'open-dialog':
+        layout.openList.hidden = true
         void openFile()
         break
+      case 'toggle-theme':
+        toggleTheme()
+        // Mermaid 图表配色不会随 CSS 变量自动切换，需要重渲染
+        void renderAll()
+        break
       case 'new':
-        model.createUntitled()
+        if (confirmDiscard()) model.createUntitled()
         break
       case 'save':
         void saveFile()
         break
       case 'toggle-outline':
         layout.outlinePanel.classList.toggle('is-collapsed')
+        saveUiState()
         break
       case 'toggle-hints':
         layout.hintPanel.classList.toggle('is-collapsed')
+        saveUiState()
         break
       case 'export':
         if (menuList) menuList.hidden = !menuList.hidden
+        layout.openList.hidden = true
         break
       case 'zoom-in':
         zoom.zoomIn()
@@ -418,11 +530,26 @@ export function bootstrapApp(mount: HTMLElement): void {
         redo(editor.view)
         break
       case 'fix-all': {
-        const fixes = currentHints
+        const items = currentHints
           .filter((hint) => hint.fix)
-          .map((hint) => hint.fix!)
-        const applied = applyFixes(fixes)
-        model.setNotice(applied > 0 ? `已应用 ${applied} 条建议` : '没有可自动应用的修改')
+          .map((hint) => ({ line: hint.line, label: hint.fix!.label }))
+        if (items.length === 0) {
+          flashNotice('没有可自动应用的修改')
+          break
+        }
+        // 应用前先列清单，让用户知道将要改动什么
+        showConfirmModal({
+          title: `应用 ${items.length} 条建议`,
+          lines: items.map((item) => `第 ${item.line} 行 · ${item.label}`),
+          confirmLabel: '全部应用',
+          onConfirm: () => {
+            const fixes = currentHints
+              .filter((hint) => hint.fix)
+              .map((hint) => hint.fix!)
+            const applied = applyFixes(fixes)
+            flashNotice(applied > 0 ? `已应用 ${applied} 条建议` : '该建议无法应用')
+          },
+        })
         break
       }
       case 'accept-external':
@@ -448,8 +575,31 @@ export function bootstrapApp(mount: HTMLElement): void {
     }
   })
 
+  /** 填充「打开」下拉：固定项 + 桌面壳下的最近文件 */
+  async function fillOpenMenu(): Promise<void> {
+    const esc = (s: string): string =>
+      s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
+    let html = `<button class="menu__item" data-action="open-dialog">打开文件…</button>`
+    if (inDesktopShell) {
+      try {
+        const result = await callHost<{ items: { path: string; name: string }[] }>('recent')
+        const items = result.items ?? []
+        if (items.length > 0) {
+          html += `<div class="menu__sep"></div>`
+          for (const item of items) {
+            html += `<button class="menu__item" data-open-recent="${esc(item.path)}" title="${esc(item.path)}">${esc(item.name)}</button>`
+          }
+        }
+      } catch {
+        // 宿主不支持时静默降级为只有「打开文件…」
+      }
+    }
+    layout.openList.innerHTML = html
+  }
+
   document.addEventListener('click', (event) => {
     if (!layout.exportMenu.contains(event.target as Node) && menuList) menuList.hidden = true
+    if (!layout.openMenu.contains(event.target as Node)) layout.openList.hidden = true
   })
 
   // ---------- 侧栏交互 ----------
@@ -460,13 +610,15 @@ export function bootstrapApp(mount: HTMLElement): void {
     const line = Number(btn.dataset.line ?? '1')
     if (viewMode.current === 'edit') {
       editor.scrollToLine(line)
+      editor.focus()
     } else {
       const id = btn.dataset.id ?? ''
       layout.previewHost
         .querySelector<HTMLElement>(`[id="${CSS.escape(id)}"]`)
         ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      // 纯预览模式下抢焦点没有意义，反而会把用户滚读的位置弄乱
+      if (viewMode.current === 'split') editor.focus()
     }
-    editor.focus()
   })
 
   /** 定位到某一行，并在编辑区与预览区同时用对应底色标出位置 */
@@ -523,7 +675,7 @@ export function bootstrapApp(mount: HTMLElement): void {
       const hint = currentHints[Number(fixButton.dataset.hintFix)]
       if (hint?.fix) {
         const applied = applyFixes([hint.fix])
-        model.setNotice(applied > 0 ? `已应用：${hint.fix.label}` : '该建议无法应用')
+        flashNotice(applied > 0 ? `已应用：${hint.fix.label}` : '该建议无法应用')
       }
       return
     }
@@ -572,6 +724,7 @@ export function bootstrapApp(mount: HTMLElement): void {
       window.removeEventListener('pointerup', onUp)
       document.body.classList.remove('is-resizing')
       scrollSync.refreshAnchors()
+      saveUiState()
     }
 
     document.body.classList.add('is-resizing')
@@ -603,9 +756,10 @@ export function bootstrapApp(mount: HTMLElement): void {
     const file = event.dataTransfer?.files?.[0]
     if (!file) return
     if (!FILE_NAME_RE.test(file.name)) {
-      model.setNotice('只支持 .md / .markdown / .txt 文件')
+      flashNotice('只支持 .md / .markdown / .txt 文件')
       return
     }
+    if (!confirmDiscard()) return
     void model.openDroppedFile(file)
   })
 
@@ -654,7 +808,7 @@ export function bootstrapApp(mount: HTMLElement): void {
     }
     if (key === 'n') {
       event.preventDefault()
-      model.createUntitled()
+      if (confirmDiscard()) model.createUntitled()
     }
   })
 
@@ -681,8 +835,37 @@ export function bootstrapApp(mount: HTMLElement): void {
   // ---------- 启动 ----------
 
   layout.previewPane.addEventListener('scroll', () => scheduleOutlineSync(), { passive: true })
+
+  // 恢复上次的面板折叠状态与分栏宽度
+  const restored = readUiState()
+  if (restored) {
+    layout.outlinePanel.classList.toggle('is-collapsed', restored.outlineCollapsed)
+    layout.hintPanel.classList.toggle('is-collapsed', restored.hintsCollapsed)
+    if (restored.editorWidthPx) {
+      layout.root.style.setProperty('--editor-width', `${restored.editorWidthPx}px`)
+      layout.root.classList.add('is-resized')
+    }
+  }
+
   applyMode(viewMode.current)
   void renderAll()
   updateStatus()
+
+  // 崩溃 / 误关后留下的未保存草稿，询问是否恢复
+  const draft = loadDraft()
+  if (draft && draft.text.trim() && draft.text !== WELCOME_DOC) {
+    const when = new Date(draft.savedAt).toLocaleString()
+    const ok = window.confirm(
+      `发现上次未保存的草稿「${draft.name}」（${when}）。恢复它吗？\n选择「否」将删除这份草稿。`,
+    )
+    if (ok) {
+      model.createUntitled(draft.name)
+      model.setText(draft.text)
+      flashNotice('已恢复上次未保存的草稿')
+    } else {
+      clearDraft()
+    }
+  }
+
   editor.focus()
 }

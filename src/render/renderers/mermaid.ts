@@ -1,5 +1,6 @@
 import { escapeHtml } from '../util'
 import { decodeSource } from './code'
+import { currentTheme } from '../../core/theme'
 import type { BlockRenderer } from '../registry'
 
 /** 源码 → SVG 缓存，避免每次重渲染都重新布局；LRU 上限防止长会话无限增长 */
@@ -25,7 +26,7 @@ function cacheSet(source: string, svg: string): void {
   }
 }
 
-let initialized = false
+let initializedFor: string | null = null
 
 type MermaidApi = {
   initialize(config: Record<string, unknown>): void
@@ -35,14 +36,17 @@ type MermaidApi = {
 async function loadMermaid(): Promise<MermaidApi> {
   const mod = (await import('mermaid')) as unknown as { default: MermaidApi }
   const api = mod.default
-  if (!initialized) {
+  const theme = currentTheme() === 'dark' ? 'dark' : 'neutral'
+  if (initializedFor !== theme) {
     api.initialize({
       startOnLoad: false,
       securityLevel: 'strict',
-      theme: 'neutral',
+      theme,
       flowchart: { htmlLabels: false },
     })
-    initialized = true
+    initializedFor = theme
+    // 主题变了，旧主题的 SVG 缓存全部作废
+    svgCache.clear()
   }
   return api
 }
@@ -71,7 +75,9 @@ export const mermaidRenderer: BlockRenderer = {
       const source = decodeSource(el.dataset.src)
       if (!source.trim()) continue
 
-      const cached = cacheGet(source)
+      // 缓存键带主题：切换深浅色后不会命中旧配色的 SVG
+      const key = `${currentTheme()}\n${source}`
+      const cached = cacheGet(key)
       if (cached) {
         el.innerHTML = cached
         el.classList.add('is-ready')
@@ -82,7 +88,7 @@ export const mermaidRenderer: BlockRenderer = {
       seq += 1
       try {
         const { svg } = await api.render(id, source)
-        cacheSet(source, svg)
+        cacheSet(key, svg)
         el.innerHTML = svg
         el.classList.add('is-ready')
       } catch (err) {

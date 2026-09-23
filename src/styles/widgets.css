@@ -4,7 +4,7 @@
   position: relative;
   border: 1px solid var(--border-1);
   border-radius: 10px;
-  background: #f6f8fa;
+  background: var(--code-bg);
   overflow: hidden;
 }
 
@@ -79,7 +79,7 @@
   bottom: 0;
   left: 0;
   height: 62px;
-  background: linear-gradient(to bottom, rgba(246, 248, 250, 0), #f6f8fa);
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--code-bg), transparent), var(--code-bg));
   pointer-events: none;
 }
 
@@ -222,6 +222,17 @@
 .md-embed__hint {
   font-size: 12px;
   color: var(--text-3);
+  animation: md-embed-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes md-embed-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 .md-embed__error {
@@ -234,7 +245,7 @@
   margin: 8px 0 0;
   padding: 10px;
   border-radius: 8px;
-  background: #f6f8fa;
+  background: var(--code-bg);
   text-align: left;
   overflow: auto;
 }
@@ -370,4 +381,74 @@
 
 .diff__text {
   flex: 1;
+}
+
+/* ---------- 下拉菜单分隔线 ---------- */
+
+.menu__sep {
+  height: 1px;
+  margin: 5px 8px;
+  background: var(--border-1);
+}
+
+/* 「应用全部」预览清单 ---------- */
+
+.confirm__list {
+  margin: 0;
+  padding: 2px 4px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.confirm__list li {
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.confirm__more {
+  color: var(--text-3);
+  background: none !important;
+}
+
+/* ---------- 编辑器搜索面板（Ctrl+F） ---------- */
+
+.cm-panel.cm-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.cm-panel.cm-search input,
+.cm-panel.cm-search button {
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-1);
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: 6px;
+  padding: 3px 8px;
+}
+
+.cm-panel.cm-search input {
+  background: var(--surface-1);
+  width: 150px;
+}
+
+.cm-panel.cm-search button:hover {
+  background: var(--surface-3);
+  border-color: var(--border-2);
+}
+
+.cm-panel.cm-search label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-2);
 }

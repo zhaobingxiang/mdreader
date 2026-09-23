@@ -28,6 +28,8 @@ export interface AppLayout {
   statCursor: HTMLElement
   dropHint: HTMLElement
   exportMenu: HTMLElement
+  openMenu: HTMLElement
+  openList: HTMLElement
   externalBanner: HTMLElement
   zoomValue: HTMLElement
 }
@@ -50,7 +52,10 @@ export function createLayout(mount: HTMLElement): AppLayout {
   mount.innerHTML = `
   <header class="topbar">
     <div class="topbar__group">
-      <button class="btn" data-action="open" title="打开本地文件 Ctrl+O">打开</button>
+      <div class="menu" data-role="open-menu">
+        <button class="btn" data-action="open-menu" title="打开文件 Ctrl+O">打开 ▾</button>
+        <div class="menu__list" hidden data-role="open-list"></div>
+      </div>
       <button class="btn" data-action="new" title="新建 Ctrl+N">新建</button>
       <button class="btn" data-action="save" title="保存 Ctrl+S">保存</button>
       <span class="doc-title">
@@ -69,6 +74,7 @@ export function createLayout(mount: HTMLElement): AppLayout {
     </div>
 
     <div class="topbar__group topbar__group--end">
+      <button class="btn btn--icon" data-action="toggle-theme" title="切换深色 / 浅色主题" aria-label="切换主题">◐</button>
       <button class="btn btn--icon" data-action="undo" title="撤销（Ctrl+Z）" aria-label="撤销">⟲</button>
       <button class="btn btn--icon" data-action="redo" title="重做（Ctrl+Y）" aria-label="重做">⟳</button>
       <div class="zoom" data-role="zoom">
@@ -176,6 +182,8 @@ export function createLayout(mount: HTMLElement): AppLayout {
     statCursor: need(mount, 'stat-cursor'),
     dropHint: need(mount, 'drop-hint'),
     exportMenu: need(mount, 'export-menu'),
+    openMenu: need(mount, 'open-menu'),
+    openList: need(mount, 'open-list'),
     externalBanner: need(mount, 'external-banner'),
     zoomValue: need(mount, 'zoom-value'),
   }
