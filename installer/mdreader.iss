@@ -2,7 +2,7 @@
 ; 编译：ISCC.exe installer\mdreader.iss
 
 #define MyAppName "mdreader"
-#define MyAppVersion "1.26.0924.01"
+#define MyAppVersion "1.26.0924.02"
 #define MyAppPublisher "mdreader"
 #define MyAppExeName "mdreader.exe"
 
@@ -46,6 +46,7 @@ Name: "en"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加快捷方式:"; Flags: checkedonce
 Name: "associate"; Description: "关联 .md 文件，双击用 mdreader 打开（会请求一次管理员权限，直接接管默认打开方式）"; GroupDescription: "文件关联:"; Flags: checkedonce
+Name: "contextmenu"; Description: "右键任意文件时显示「使用 mdreader 打开」"; GroupDescription: "右键菜单:"; Flags: checkedonce
 
 [Files]
 Source: "..\desktop\publish\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
@@ -67,6 +68,10 @@ Root: HKA; Subkey: "Software\Classes\mdreader.Document\shell\open\command"; Valu
 ; 可选：把「打开方式」里的友好名称也一起注册
 Root: HKA; Subkey: "Software\Classes\Applications\{#MyAppExeName}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: associate
 Root: HKA; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: ".md"; ValueData: ""; Tasks: associate
+; 右键任意文件 → 「使用 mdreader 打开」
+Root: HKA; Subkey: "Software\Classes\*\shell\mdreader"; ValueType: string; ValueName: ""; ValueData: "使用 mdreader 打开"; Flags: uninsdeletekey; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\*\shell\mdreader"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\{#MyAppExeName},0"; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\*\shell\mdreader\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: contextmenu
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "立即启动 {#MyAppName}"; Flags: nowait postinstall skipifsilent
