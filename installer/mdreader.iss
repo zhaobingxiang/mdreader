@@ -2,7 +2,7 @@
 ; 编译：ISCC.exe installer\mdreader.iss
 
 #define MyAppName "mdreader"
-#define MyAppVersion "1.26.0903.01"
+#define MyAppVersion "1.26.0924.01"
 #define MyAppPublisher "mdreader"
 #define MyAppExeName "mdreader.exe"
 
@@ -45,11 +45,12 @@ Name: "en"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加快捷方式:"; Flags: checkedonce
-Name: "associate"; Description: "关联 .md 文件，双击用 mdreader 打开"; GroupDescription: "文件关联:"; Flags: checkedonce
+Name: "associate"; Description: "关联 .md 文件，双击用 mdreader 打开（会请求一次管理员权限，直接接管默认打开方式）"; GroupDescription: "文件关联:"; Flags: checkedonce
 
 [Files]
 Source: "..\desktop\publish\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\desktop\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pdb"
+Source: "reset-md-userchoice.ps1"; DestDir: "{tmp}"; Flags: deleteafterinstall; Tasks: associate
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -60,6 +61,7 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 ; .md 文件关联（HKA 会按安装模式自动选择 HKLM 或 HKCU）
 Root: HKA; Subkey: "Software\Classes\.md"; ValueType: string; ValueName: ""; ValueData: "mdreader.Document"; Flags: uninsdeletevalue; Tasks: associate
 Root: HKA; Subkey: "Software\Classes\mdreader.Document"; ValueType: string; ValueName: ""; ValueData: "Markdown 文档"; Flags: uninsdeletekey; Tasks: associate
+Root: HKA; Subkey: "Software\Classes\mdreader.Document"; ValueType: string; ValueName: "FriendlyTypeName"; ValueData: "Markdown 文档"; Tasks: associate
 Root: HKA; Subkey: "Software\Classes\mdreader.Document\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"; Tasks: associate
 Root: HKA; Subkey: "Software\Classes\mdreader.Document\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: associate
 ; 可选：把「打开方式」里的友好名称也一起注册
@@ -73,6 +75,27 @@ Filename: "{app}\{#MyAppExeName}"; Description: "立即启动 {#MyAppName}"; Fla
 Type: filesandordirs; Name: "{app}"
 
 [Code]
+// Windows 用带哈希保护的 UserChoice 键记录默认应用，安装程序不能直接写。
+// 但该键可以被「删除」：启用 SeRestorePrivilege 后 RegDeleteTree 绕过其 Deny DACL，
+// 删掉后系统回退到 HKCU\Software\Classes\.md，即 mdreader。需要一次 UAC 授权。
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    if WizardSilent then Exit;
+    if not WizardIsTaskSelected('associate') then Exit;
+    if not FileExists(ExpandConstant('{tmp}\reset-md-userchoice.ps1')) then Exit;
+    ShellExec('runas',
+      ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+      '-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "' +
+        ExpandConstant('{tmp}\reset-md-userchoice.ps1') + '"',
+      '', SW_HIDE, ewNoWait, ResultCode);
+    // 用户拒绝 UAC 不算失败：注册表兜底关联仍然有效
+  end;
+end;
+
 function WebView2Version(out Version: String): Boolean;
 var
   FindRec: TFindRec;
