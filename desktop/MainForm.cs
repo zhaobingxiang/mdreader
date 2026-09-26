@@ -132,6 +132,7 @@ internal sealed class MainForm : Form
             core.ProcessFailed += OnProcessFailed;
             core.NewWindowRequested += OnNewWindowRequested;
             core.NavigationStarting += OnNavigationStarting;
+            _bridge.AttachAssets(core, environment);
 
             core.Navigate($"https://{HostBridge.VirtualHost}/index.html");
             StartPipeServer();
@@ -305,6 +306,7 @@ internal sealed class MainForm : Form
     private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
     {
         if (e.Uri.StartsWith($"https://{HostBridge.VirtualHost}/", StringComparison.OrdinalIgnoreCase)) return;
+        if (e.Uri.StartsWith($"https://{HostBridge.AssetHost}/", StringComparison.OrdinalIgnoreCase)) return;
         if (e.Uri.StartsWith("about:", StringComparison.OrdinalIgnoreCase)) return;
 
         e.Cancel = true;

@@ -5,6 +5,7 @@ import { fsAccessAdapter, isFsAccessSupported } from './core/file/fs-access'
 import {
   callHost,
   createHostHandle,
+  DESKTOP_ASSET_BASE,
   isWebViewHost,
   notifyTitle,
   onHostEvent,
@@ -49,6 +50,8 @@ export function bootstrapApp(mount: HTMLElement): void {
   const pipeline = new PreviewPipeline(engine)
   /** 跑在 .NET + WebView2 桌面壳里时，文件能力由宿主提供 */
   const inDesktopShell = isWebViewHost()
+  /** md 里相对路径的图片等资源，桌面壳交给宿主按文档目录解析；浏览器版没有这个能力 */
+  const assetBaseDir = inDesktopShell ? DESKTOP_ASSET_BASE : ''
   model.setAdapter(inDesktopShell ? webviewAdapter : fsAccessAdapter)
 
   // ---------- 状态提示与界面持久化 ----------
@@ -231,7 +234,7 @@ export function bootstrapApp(mount: HTMLElement): void {
   // ---------- 渲染 ----------
 
   async function renderAll(): Promise<void> {
-    const result = await pipeline.renderInto(layout.previewHost, model.currentText, '')
+    const result = await pipeline.renderInto(layout.previewHost, model.currentText, assetBaseDir)
     if (result.stale) return
 
     outline = result.outline

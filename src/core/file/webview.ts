@@ -41,6 +41,12 @@ export function isWebViewHost(): boolean {
   return host() !== null
 }
 
+/**
+ * 桌面壳里相对资源的基地址：宿主拦截 https://mdasset.local/* 请求，
+ * 按当前文档所在目录解析成真实文件（图片等本地资源因此可显示）。
+ */
+export const DESKTOP_ASSET_BASE = 'https://mdasset.local/'
+
 const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>()
 const pathListeners = new Map<string, Set<PathListener>>()
 const globalListeners = new Set<(event: HostEvent) => void>()

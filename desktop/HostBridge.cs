@@ -16,6 +16,7 @@ namespace MdReader;
 internal sealed class HostBridge : IDisposable
 {
     public const string VirtualHost = "mdreader.local";
+    public const string AssetHost = "mdasset.local";
     public const string PipeName = "mdreader.open.file";
 
     /// <summary>自己写入文件后，这段时间内忽略 watcher 的回声</summary>
@@ -30,6 +31,10 @@ internal sealed class HostBridge : IDisposable
     private readonly Dictionary<string, DateTime> _selfWrites = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _allowedPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly Queue<string> _pendingOpen = new();
+
+    /// <summary>当前文档的目录，本地图片等相对资源以此为基准解析（见 mdasset.local）</summary>
+    private string? _docDir;
+    private CoreWebView2Environment? _environment;
 
     /// <summary>最近打开的文件（MRU），落盘在 LocalAppData，供「打开」下拉快速回访</summary>
     private readonly List<string> _recent = new();
@@ -83,6 +88,7 @@ internal sealed class HostBridge : IDisposable
             var text = ReadAllTextCapped(info);
             Authorize(path);
             AttachWatch(path);
+            _docDir = Path.GetDirectoryName(path);
 
             Post(new JsonObject
             {
@@ -214,6 +220,7 @@ internal sealed class HostBridge : IDisposable
         var text = ReadAllTextCapped(info);
         Authorize(path);
         AttachWatch(path);
+        _docDir = Path.GetDirectoryName(path);
 
         Reply(id, new JsonObject
         {
@@ -288,6 +295,7 @@ internal sealed class HostBridge : IDisposable
         File.WriteAllText(path, text, new UTF8Encoding(false));
         Authorize(path);
         AttachWatch(path);
+        _docDir = Path.GetDirectoryName(path);
 
         Reply(id, new JsonObject
         {
@@ -498,6 +506,98 @@ internal sealed class HostBridge : IDisposable
     }
 
     // ---------- 路径授权 ----------
+
+    /// <summary>
+    /// 本地资源服务：md 里引用的相对路径图片会写成 https://mdasset.local/&lt;相对路径&gt;，
+    /// 请求在这里拦截并按当前文档目录解析，不经过网络。
+    /// </summary>
+    public void AttachAssets(CoreWebView2 core, CoreWebView2Environment environment)
+    {
+        _environment = environment;
+        core.AddWebResourceRequestedFilter($"https://{AssetHost}/*", CoreWebView2WebResourceContext.All);
+        core.WebResourceRequested += OnAssetRequest;
+    }
+
+    private void OnAssetRequest(object? sender, CoreWebView2WebResourceRequestedEventArgs args)
+    {
+        var environment = _environment;
+        if (environment == null) return;
+
+        // 读文件可能较慢，挂起事件让 WebView2 不必干等
+        var deferral = args.GetDeferral();
+        try
+        {
+            args.Response = ResolveAssetResponse(environment, args.Request.Uri);
+        }
+        catch
+        {
+            args.Response = environment.CreateWebResourceResponse(null, 500, "Internal Server Error", string.Empty);
+        }
+        finally
+        {
+            deferral.Complete();
+        }
+    }
+
+    private CoreWebView2WebResourceResponse ResolveAssetResponse(CoreWebView2Environment environment, string uri)
+    {
+        var noStore = "Access-Control-Allow-Origin: *\r\nCache-Control: no-store";
+
+        var docDir = _docDir;
+        if (string.IsNullOrEmpty(docDir))
+        {
+            return environment.CreateWebResourceResponse(null, 404, "Not Found", noStore);
+        }
+
+        string absolutePath;
+        try
+        {
+            var parsed = new Uri(uri);
+            var relative = Uri.UnescapeDataString(parsed.AbsolutePath).TrimStart('/');
+            if (relative.Length == 0)
+            {
+                return environment.CreateWebResourceResponse(null, 404, "Not Found", noStore);
+            }
+            absolutePath = Path.GetFullPath(Path.Combine(docDir, relative));
+        }
+        catch
+        {
+            return environment.CreateWebResourceResponse(null, 400, "Bad Request", noStore);
+        }
+
+        // 归一化之后必须仍落在当前文档目录子树内，防止 '..' 或绝对路径越权读盘
+        var root = Path.TrimEndingDirectorySeparator(docDir);
+        var separator = Path.DirectorySeparatorChar.ToString();
+        if (!absolutePath.StartsWith(root + separator, StringComparison.OrdinalIgnoreCase))
+        {
+            return environment.CreateWebResourceResponse(null, 403, "Forbidden", noStore);
+        }
+
+        var info = new FileInfo(absolutePath);
+        if (!info.Exists || info.Length > MaxFileBytes)
+        {
+            return environment.CreateWebResourceResponse(null, 404, "Not Found", noStore);
+        }
+
+        var stream = new FileStream(absolutePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        var headers = $"Content-Type: {MimeFor(absolutePath)}\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *";
+        return environment.CreateWebResourceResponse(stream, 200, "OK", headers);
+    }
+
+    private static string MimeFor(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    {
+        ".png" => "image/png",
+        ".jpg" or ".jpeg" => "image/jpeg",
+        ".gif" => "image/gif",
+        ".webp" => "image/webp",
+        ".svg" => "image/svg+xml",
+        ".bmp" => "image/bmp",
+        ".ico" => "image/x-icon",
+        ".avif" => "image/avif",
+        ".apng" => "image/apng",
+        ".tif" or ".tiff" => "image/tiff",
+        _ => "application/octet-stream",
+    };
 
     /// <summary>只有经用户动作（启动参数、双击、打开/另存对话框）进过白名单的路径可读写</summary>
     private void Authorize(string fullPath)
