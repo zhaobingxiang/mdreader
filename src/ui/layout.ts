@@ -2,8 +2,6 @@ import type { ViewMode } from '../core/view-mode'
 
 export interface AppLayout {
   root: HTMLElement
-  titleBar: HTMLElement
-  titleDoc: HTMLElement
   workspace: HTMLElement
   splitter: HTMLElement
   docName: HTMLElement
@@ -54,18 +52,15 @@ export function createLayout(mount: HTMLElement): AppLayout {
   mount.classList.add('app')
   mount.dataset.mode = 'preview'
   mount.innerHTML = `
-  <div class="titlebar" data-role="titlebar">
-    <span class="titlebar__doc" data-role="title-doc">mdreader</span>
-    <div class="titlebar__controls">
+  <div class="tabstrip" data-role="tabstrip">
+    <div class="tabstrip__list" data-role="tab-list"></div>
+    <button class="tabstrip__new" data-action="tab-new" title="打开新标签页" aria-label="新标签页">＋</button>
+    <span class="tabstrip__spacer" aria-hidden="true"></span>
+    <div class="tabstrip__controls">
       <button class="tb-btn" data-win="min" title="最小化" aria-label="最小化">─</button>
       <button class="tb-btn" data-win="max" title="最大化" aria-label="最大化">□</button>
       <button class="tb-btn tb-btn--close" data-win="close" title="关闭" aria-label="关闭">✕</button>
     </div>
-  </div>
-
-  <div class="tabstrip" data-role="tabstrip">
-    <div class="tabstrip__list" data-role="tab-list"></div>
-    <button class="tabstrip__new" data-action="tab-new" title="打开新标签页" aria-label="新标签页">＋</button>
   </div>
 
   <header class="topbar">
@@ -175,8 +170,6 @@ export function createLayout(mount: HTMLElement): AppLayout {
 
   return {
     root: mount,
-    titleBar: need(mount, 'titlebar'),
-    titleDoc: need(mount, 'title-doc'),
     workspace: need(mount, 'workspace'),
     splitter: need(mount, 'splitter'),
     docName: need(mount, 'doc-name'),

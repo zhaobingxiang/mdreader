@@ -2,7 +2,7 @@
 ; 编译：ISCC.exe installer\mdreader.iss
 
 #define MyAppName "mdreader"
-#define MyAppVersion "1.26.1013.02"
+#define MyAppVersion "1.26.1013.03"
 #define MyAppPublisher "mdreader"
 #define MyAppExeName "mdreader.exe"
 
@@ -45,8 +45,8 @@ Name: "en"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加快捷方式:"; Flags: checkedonce
-Name: "associate"; Description: "关联 .md 文件，双击用 mdreader 打开（会请求一次管理员权限，直接接管默认打开方式）"; GroupDescription: "文件关联:"; Flags: checkedonce
-Name: "contextmenu"; Description: "右键任意文件时显示「使用 mdreader 打开」"; GroupDescription: "右键菜单:"; Flags: checkedonce
+Name: "associate"; Description: "关联 .md 文件，双击用 mdreader 打开（会请求一次管理员权限，直接接管默认打开方式）"; GroupDescription: "文件关联:"; 
+Name: "contextmenu"; Description: "右键任意文件时显示「使用 mdreader 打开」"; GroupDescription: "右键菜单:"; 
 
 [Files]
 Source: "..\desktop\publish\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion

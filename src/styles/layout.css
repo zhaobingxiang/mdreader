@@ -1,7 +1,7 @@
 .app {
   height: 100vh;
   display: grid;
-  grid-template-rows: auto auto auto auto 1fr auto;
+  grid-template-rows: auto auto auto 1fr auto;
   /* 列宽必须可收缩：grid 子项的 min-width:auto 会让内容的最小宽度
      （比如预览里的长代码行）把整个界面撑出视口，顶栏跟着溢出，
      导出按钮就被裁成半截 */
@@ -12,53 +12,60 @@
 /* display:none 的子项不占隐式行：横幅隐藏时 workspace 会被挤进
    第二行（auto），状态栏反而吃掉 1fr。显式钉死行号 */
 .external-banner {
-  grid-row: 4;
+  grid-row: 3;
 }
 
 .workspace {
-  grid-row: 5;
+  grid-row: 4;
 }
 
 .statusbar {
-  grid-row: 6;
+  grid-row: 5;
 }
 
-/* ---------- 自绘标题栏（仅桌面壳显示） ---------- */
+/* ---------- 标签栏（桌面壳里兼作标题栏） ---------- */
 
-.titlebar {
-  display: none;
-}
-
-.app.is-desktop .titlebar {
+.tabstrip {
   grid-row: 1;
   display: flex;
-  align-items: stretch;
-  height: 34px;
-  background: var(--surface-1);
+  align-items: flex-end;
+  gap: 4px;
+  padding: 6px 8px 0;
+  background: var(--surface-3);
+  border-bottom: 1px solid var(--border-1);
   user-select: none;
   -webkit-user-select: none;
 }
 
-.titlebar__doc {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  padding: 0 12px;
-  font-size: 12px;
-  color: var(--text-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* 空白占位（桌面壳）：把窗口按钮推到最右，同时是可拖动区域 */
+.tabstrip__spacer {
+  display: none;
 }
 
-.titlebar__controls {
+.app.is-desktop .tabstrip__spacer {
+  display: block;
+  flex: 1;
+  min-width: 0;
+}
+
+.app.is-desktop .tabstrip {
+  padding-right: 0;
+}
+
+/* 窗口按钮（桌面壳）：贴在标签行最右边 */
+.tabstrip__controls {
+  display: none;
+}
+
+.app.is-desktop .tabstrip__controls {
   display: flex;
   flex: none;
+  align-self: stretch;
+  margin: -6px 0 -1px;
 }
 
 .tb-btn {
-  width: 46px;
+  width: 44px;
   border: none;
   border-radius: 0;
   background: none;
@@ -75,20 +82,6 @@
 .tb-btn--close:hover {
   background: #c42b1c;
   color: #fff;
-}
-
-/* ---------- 标签栏 ---------- */
-
-.tabstrip {
-  grid-row: 2;
-  display: flex;
-  align-items: flex-end;
-  gap: 4px;
-  padding: 6px 8px 0;
-  background: var(--surface-3);
-  border-bottom: 1px solid var(--border-1);
-  user-select: none;
-  -webkit-user-select: none;
 }
 
 .tabstrip__list {
@@ -189,7 +182,7 @@
 /* ---------- 顶栏 ---------- */
 
 .topbar {
-  grid-row: 3;
+  grid-row: 2;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -971,7 +964,6 @@ span.cm-hl-text--selection {
 }
 
 @media print {
-  .titlebar,
   .tabstrip,
   .topbar,
   .panel,

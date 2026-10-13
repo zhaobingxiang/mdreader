@@ -129,6 +129,8 @@ internal sealed class HostBridge : IDisposable
             {
                 case "ping":
                     Reply(id, new JsonObject { ["host"] = "webview2" });
+                    // 页面就绪：补发一次当前窗口状态，否则启动即最大化时按钮字形停留在"最大化"
+                    NotifyWindowState(_form.WindowState == FormWindowState.Maximized);
                     break;
                 case "openFile":
                     HandleOpenFile(id);

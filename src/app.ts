@@ -399,9 +399,6 @@ export function bootstrapApp(mount: HTMLElement): void {
     const snapshot = model.snapshot
     layout.statPath.textContent = snapshot.path || snapshot.name
     layout.docName.textContent = snapshot.name
-    layout.titleDoc.textContent = snapshot.dirty
-      ? `• ${snapshot.name} — mdreader`
-      : `${snapshot.name} — mdreader`
     layout.dirtyDot.hidden = !snapshot.dirty
     layout.statNotice.textContent = snapshot.notice ?? ''
     if (inDesktopShell && activeTab) {
@@ -678,27 +675,30 @@ export function bootstrapApp(mount: HTMLElement): void {
         })()
       }
     })
+    // 事件监听已就位：ping 一次让宿主补发窗口状态（启动即最大化时按钮字形要靠它）
+    void callHost('ping').catch(() => undefined)
   }
 
   // ---------- 自绘标题栏（桌面壳） ----------
 
   function setMaximizedUi(maximized: boolean): void {
     layout.root.classList.toggle('is-maximized', maximized)
-    const btn = layout.titleBar.querySelector<HTMLElement>('[data-win="max"]')
+    const btn = layout.tabStrip.querySelector<HTMLElement>('[data-win="max"]')
     if (!btn) return
     btn.textContent = maximized ? '❐' : '□'
     btn.title = maximized ? '向下还原' : '最大化'
   }
 
   // 无边框窗口的拖动由宿主配合：按下时交回系统标题栏逻辑
-  layout.titleBar.addEventListener('pointerdown', (event) => {
+  // tab 行就是标题栏：空白处（含文档名）可拖动，标签和按钮除外
+  layout.tabStrip.addEventListener('pointerdown', (event) => {
     const mouse = event as PointerEvent
     if (mouse.button !== 0) return
-    if ((event.target as HTMLElement).closest('[data-win]')) return
+    if ((event.target as HTMLElement).closest('[data-win], .tab, .tabstrip__new')) return
     void callHost('beginDrag').catch(() => undefined)
   })
-  layout.titleBar.addEventListener('dblclick', (event) => {
-    if ((event.target as HTMLElement).closest('[data-win]')) return
+  layout.tabStrip.addEventListener('dblclick', (event) => {
+    if ((event.target as HTMLElement).closest('[data-win], .tab, .tabstrip__new')) return
     void callHost('winMax').catch(() => undefined)
   })
 
