@@ -34,6 +34,8 @@ export interface AppLayout {
   openList: HTMLElement
   externalBanner: HTMLElement
   zoomValue: HTMLElement
+  tabStrip: HTMLElement
+  tabList: HTMLElement
 }
 
 function need<T extends HTMLElement>(root: HTMLElement, role: string): T {
@@ -50,7 +52,7 @@ const MODE_LABEL: Record<ViewMode, string> = {
 
 export function createLayout(mount: HTMLElement): AppLayout {
   mount.classList.add('app')
-  mount.dataset.mode = 'split'
+  mount.dataset.mode = 'preview'
   mount.innerHTML = `
   <div class="titlebar" data-role="titlebar">
     <span class="titlebar__doc" data-role="title-doc">mdreader</span>
@@ -59,6 +61,11 @@ export function createLayout(mount: HTMLElement): AppLayout {
       <button class="tb-btn" data-win="max" title="最大化" aria-label="最大化">□</button>
       <button class="tb-btn tb-btn--close" data-win="close" title="关闭" aria-label="关闭">✕</button>
     </div>
+  </div>
+
+  <div class="tabstrip" data-role="tabstrip">
+    <div class="tabstrip__list" data-role="tab-list"></div>
+    <button class="tabstrip__new" data-action="tab-new" title="打开新标签页" aria-label="新标签页">＋</button>
   </div>
 
   <header class="topbar">
@@ -95,6 +102,7 @@ export function createLayout(mount: HTMLElement): AppLayout {
       </div>
       <button class="btn" data-action="toggle-outline" title="显示 / 隐藏大纲">大纲</button>
       <button class="btn" data-action="toggle-hints" title="显示 / 隐藏书写提示">提示</button>
+      <button class="btn" data-action="settings" title="设置">设置</button>
       <div class="menu" data-role="export-menu">
         <button class="btn btn--primary" data-action="export" title="导出">导出</button>
         <div class="menu__list" hidden>
@@ -199,5 +207,7 @@ export function createLayout(mount: HTMLElement): AppLayout {
     openList: need(mount, 'open-list'),
     externalBanner: need(mount, 'external-banner'),
     zoomValue: need(mount, 'zoom-value'),
+    tabStrip: need(mount, 'tabstrip'),
+    tabList: need(mount, 'tab-list'),
   }
 }

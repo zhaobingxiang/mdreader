@@ -110,9 +110,14 @@ export function onHostEvent(cb: (event: HostEvent) => void): () => void {
   }
 }
 
-export function notifyTitle(name: string, dirty: boolean, dark: boolean): void {
+export function notifyTitle(
+  name: string,
+  dirty: boolean,
+  dark: boolean,
+  path: string,
+): void {
   if (!isWebViewHost()) return
-  void callHost('setTitle', { name, dirty, dark }).catch(() => undefined)
+  void callHost('setTitle', { name, dirty, dark, path }).catch(() => undefined)
 }
 
 export function revealInExplorer(path: string): void {

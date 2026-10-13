@@ -1,7 +1,7 @@
 .app {
   height: 100vh;
   display: grid;
-  grid-template-rows: auto auto auto 1fr auto;
+  grid-template-rows: auto auto auto auto 1fr auto;
   /* 列宽必须可收缩：grid 子项的 min-width:auto 会让内容的最小宽度
      （比如预览里的长代码行）把整个界面撑出视口，顶栏跟着溢出，
      导出按钮就被裁成半截 */
@@ -12,15 +12,15 @@
 /* display:none 的子项不占隐式行：横幅隐藏时 workspace 会被挤进
    第二行（auto），状态栏反而吃掉 1fr。显式钉死行号 */
 .external-banner {
-  grid-row: 3;
-}
-
-.workspace {
   grid-row: 4;
 }
 
-.statusbar {
+.workspace {
   grid-row: 5;
+}
+
+.statusbar {
+  grid-row: 6;
 }
 
 /* ---------- 自绘标题栏（仅桌面壳显示） ---------- */
@@ -77,10 +77,119 @@
   color: #fff;
 }
 
+/* ---------- 标签栏 ---------- */
+
+.tabstrip {
+  grid-row: 2;
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  padding: 6px 8px 0;
+  background: var(--surface-3);
+  border-bottom: 1px solid var(--border-1);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.tabstrip__list {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  min-width: 0;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  min-width: 90px;
+  padding: 5px 8px 6px 10px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  font-size: 12.5px;
+  color: var(--text-2);
+  cursor: default;
+}
+
+.tab:hover {
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+
+.tab.is-active {
+  background: var(--surface-1);
+  border-color: var(--border-1);
+  color: var(--text-1);
+  /* 盖住 tabstrip 的底线，做出与顶栏连为一体的效果 */
+  margin-bottom: -1px;
+  padding-bottom: 7px;
+}
+
+.tab__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.tab__dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.tab__close {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--text-3);
+  font-size: 10px;
+  line-height: 1;
+  cursor: default;
+  opacity: 0;
+}
+
+.tab:hover .tab__close,
+.tab.is-active .tab__close {
+  opacity: 1;
+}
+
+.tab__close:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.tabstrip__new {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  margin-bottom: 3px;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  color: var(--text-2);
+  font-size: 14px;
+  cursor: default;
+}
+
+.tabstrip__new:hover {
+  background: var(--surface-1);
+  color: var(--text-1);
+}
+
 /* ---------- 顶栏 ---------- */
 
 .topbar {
-  grid-row: 2;
+  grid-row: 3;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -863,6 +972,7 @@ span.cm-hl-text--selection {
 
 @media print {
   .titlebar,
+  .tabstrip,
   .topbar,
   .panel,
   .splitter,

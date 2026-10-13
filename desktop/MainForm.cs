@@ -3,6 +3,8 @@ using System.Drawing;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json.Nodes;
+using System.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
@@ -18,6 +20,7 @@ internal sealed class MainForm : Form
 
     private bool _allowExit;
     private int _borderPx = 7;
+    private System.Threading.Timer? _geometryTimer;
 
     public MainForm(string? initialFile)
     {
@@ -28,6 +31,9 @@ internal sealed class MainForm : Form
         Size = new Size(1340, 900);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(247, 247, 245);
+
+        // 「记住窗口大小位置」开启时先用上次退出时的几何恢复
+        ApplySavedGeometry();
 
         // 无边框窗口：标题栏 / 最小化 / 最大化 / 关闭全部由页面内自绘，
         // 深色模式才能整体一致；边缘留出一条缩放带（见 WndProc）
@@ -66,6 +72,8 @@ internal sealed class MainForm : Form
 
         Load += OnLoadAsync;
         FormClosed += OnFormClosed;
+        LocationChanged += (_, _) => ScheduleGeometrySave();
+        SizeChanged += (_, _) => ScheduleGeometrySave();
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -396,7 +404,81 @@ internal sealed class MainForm : Form
     {
         _pipeCts?.Cancel();
         _pipeCts?.Dispose();
+        _geometryTimer?.Dispose();
+        _geometryTimer = null;
+        SaveGeometryNow();
         _bridge.Dispose();
+    }
+
+    // ---------- 窗口几何记忆（rememberWindow） ----------
+
+    private void ApplySavedGeometry()
+    {
+        if (!SettingsStore.GetBool("rememberWindow", true)) return;
+        if (SettingsStore.Get("window") is not JsonObject obj) return;
+        try
+        {
+            var x = obj["x"]?.GetValue<int>() ?? 0;
+            var y = obj["y"]?.GetValue<int>() ?? 0;
+            var w = obj["w"]?.GetValue<int>() ?? 0;
+            var h = obj["h"]?.GetValue<int>() ?? 0;
+            var max = obj["max"]?.GetValue<bool>() ?? false;
+            if (w < 640 || h < 400) return;
+            // 显示器变化后旧坐标可能悬在屏幕外，落在任一工作区内才恢复
+            var rect = new Rectangle(x, y, w, h);
+            if (!Screen.AllScreens.Any(s => s.WorkingArea.IntersectsWith(rect))) return;
+            StartPosition = FormStartPosition.Manual;
+            Location = new Point(x, y);
+            Size = new Size(w, h);
+            if (max) WindowState = FormWindowState.Maximized;
+        }
+        catch
+        {
+            // 记录损坏就用默认几何
+        }
+    }
+
+    private void ScheduleGeometrySave()
+    {
+        // 构造期间的属性赋值也会触发事件，句柄就绪后才开始记时
+        if (!IsHandleCreated) return;
+        _geometryTimer ??= new System.Threading.Timer(_ =>
+        {
+            try
+            {
+                if (IsHandleCreated) BeginInvoke((Action)SaveGeometryNow);
+            }
+            catch
+            {
+                // 窗口正在关闭
+            }
+        }, null, Timeout.Infinite, Timeout.Infinite);
+        _geometryTimer.Change(700, Timeout.Infinite);
+    }
+
+    private void SaveGeometryNow()
+    {
+        if (!SettingsStore.GetBool("rememberWindow", true)) return;
+        try
+        {
+            var maximized = WindowState == FormWindowState.Maximized;
+            var bounds = WindowState == FormWindowState.Normal
+                ? new Rectangle(Location, Size)
+                : RestoreBounds;
+            if (bounds.Width <= 0 || bounds.Height <= 0) return;
+            SettingsStore.Set("window", new JsonObject
+            {
+                ["x"] = bounds.X,
+                ["y"] = bounds.Y,
+                ["w"] = bounds.Width,
+                ["h"] = bounds.Height,
+                ["max"] = maximized,
+            });
+        }
+        catch
+        {
+            // 写失败只影响下次启动的记忆
+        }
     }
 
     // ---------- Win32 互操作 ----------

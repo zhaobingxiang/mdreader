@@ -9,7 +9,6 @@
  * 拖选时选区元素直接不渲染。
  */
 
-const STORAGE_KEY = 'mdreader.zoom'
 export const MIN_ZOOM = 0.3
 export const MAX_ZOOM = 4
 export const ZOOM_STEP = 0.1
@@ -32,27 +31,15 @@ export interface ZoomController {
   subscribe(cb: (factor: number) => void): () => void
 }
 
-function readSaved(): number | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return null
-    const value = Number(raw)
-    return Number.isFinite(value) ? clampZoom(value) : null
-  } catch {
-    return null
-  }
-}
-
-function writeSaved(factor: number): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, String(factor))
-  } catch {
-    // 隐私模式下写不了，忽略
-  }
-}
-
-export function createZoomController(): ZoomController {
-  let factor = readSaved() ?? 1
+/**
+ * 缩放值统一由设置模块持久化（settings.zoom），
+ * 这里只管应用与广播；初始值与写回都由调用方注入。
+ */
+export function createZoomController(
+  initial: number,
+  onChanged: (factor: number) => void,
+): ZoomController {
+  let factor = clampZoom(initial)
   const listeners = new Set<(value: number) => void>()
 
   const emit = (): void => {
@@ -63,7 +50,7 @@ export function createZoomController(): ZoomController {
   const applyFactor = (next: number): void => {
     factor = clampZoom(next)
     emit()
-    writeSaved(factor)
+    onChanged(factor)
   }
 
   return {

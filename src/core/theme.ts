@@ -1,23 +1,19 @@
 /**
- * 主题控制：light / dark，默认跟随系统。
- * 用户手动切换后固定住，不再随系统变化。
+ * 主题控制：light / dark / system。
+ * system 跟随 prefers-color-scheme 实时变化；
+ * 用户手动切换后固定为 light / dark，不再随系统变化。
+ * 主题值统一持久化在设置模块（settings.theme）。
  */
+
+import type { ThemeSetting } from './settings'
 
 export type ThemeName = 'light' | 'dark'
 
-const STORAGE_KEY = 'mdreader.theme'
+let setting: ThemeSetting = 'system'
 
 function systemTheme(): ThemeName {
+  if (typeof window === 'undefined') return 'light'
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-}
-
-function readSaved(): ThemeName | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    return raw === 'light' || raw === 'dark' ? raw : null
-  } catch {
-    return null
-  }
 }
 
 function apply(name: ThemeName): void {
@@ -28,20 +24,23 @@ export function currentTheme(): ThemeName {
   return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light'
 }
 
-export function initTheme(): void {
-  apply(readSaved() ?? systemTheme())
-  window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener('change', (event) => {
-    if (readSaved() === null) apply(event.matches ? 'dark' : 'light')
-  })
+export function resolveTheme(s: ThemeSetting): ThemeName {
+  return s === 'system' ? systemTheme() : s
 }
 
-export function toggleTheme(): ThemeName {
-  const next: ThemeName = currentTheme() === 'dark' ? 'light' : 'dark'
-  apply(next)
-  try {
-    localStorage.setItem(STORAGE_KEY, next)
-  } catch {
-    // 隐私模式，本次会话内仍生效
-  }
-  return next
+/** 设置变更（本窗口或其他来源）统一从这里落地 */
+export function applyThemeSetting(next: ThemeSetting): void {
+  setting = next
+  apply(resolveTheme(next))
+}
+
+export function getThemeSetting(): ThemeSetting {
+  return setting
+}
+
+// 单元测试在 node 环境跑，没有 window
+if (typeof window !== 'undefined') {
+  window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (setting === 'system') apply(systemTheme())
+  })
 }

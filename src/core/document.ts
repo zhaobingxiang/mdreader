@@ -6,6 +6,8 @@ export interface DocumentSnapshot {
   text: string
   name: string
   path: string
+  /** 句柄上的真实磁盘路径；未落盘的文档（新建 / 拖入）为空串。path 是带文件名兜底的展示值 */
+  rawPath: string
   /** 有未保存修改 */
   dirty: boolean
   /** 底层句柄是否可写（拖入的文件、未授权目录为 false） */
@@ -56,6 +58,7 @@ export class MarkdownDocument {
       text: this.text,
       name: this.handle.meta.name,
       path: this.handle.meta.path || this.handle.meta.name,
+      rawPath: this.handle.meta.path,
       dirty: this.text !== this.savedText,
       writable: this.writable,
       pendingExternal: this.pendingExternal,

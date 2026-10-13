@@ -44,6 +44,12 @@ export interface EditorHandle {
   setText(text: string): void
   /** 重建编辑器状态（彻底清空撤销历史），用于打开 / 切换文档 */
   resetDoc(text: string): void
+  /** 当前编辑器状态快照（含撤销历史与选区），标签页切走时保存 */
+  currentState(): EditorState
+  /** 用本编辑器扩展新建一份状态（历史为空），标签页首次挂载时用 */
+  newStateFor(text: string): EditorState
+  /** 切换到已有状态；只接受本编辑器产生的状态，标签页切回时用 */
+  useState(state: EditorState): void
   focus(): void
   scrollToLine(line: number): void
   /** 当前视口顶部的行号，供滚动同步用 */
@@ -135,6 +141,11 @@ export function createEditor(options: CreateEditorOptions): EditorHandle {
   return {
     view,
     getText: () => view.state.doc.toString(),
+    currentState: () => view.state,
+    newStateFor: (text) => EditorState.create({ doc: text, extensions }),
+    useState(state) {
+      view.setState(state)
+    },
     resetDoc(text) {
       // 打开 / 切换文档时重建整个 state：彻底清空撤销历史。
       // 仅用 Transaction.remote 不够——旧文档的编辑记录还在历史里，

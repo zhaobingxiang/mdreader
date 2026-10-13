@@ -165,6 +165,16 @@ internal sealed class HostBridge : IDisposable
                 case "openRecent":
                     HandleOpenRecent(id, message);
                     break;
+                case "getSettings":
+                    Reply(id, SettingsStore.Snapshot());
+                    break;
+                case "setSettings":
+                    if (message["patch"] is JsonObject patch) SettingsStore.Patch(patch);
+                    Reply(id, SettingsStore.Snapshot());
+                    break;
+                case "openPaths":
+                    HandleOpenPaths(id, message);
+                    break;
                 case "beginDrag":
                     if (_form.IsHandleCreated) _form.BeginInvoke((Action)_form.BeginDrag);
                     Reply(id, new JsonObject { ["ok"] = true });
@@ -340,6 +350,21 @@ internal sealed class HostBridge : IDisposable
         _dirty = dirty;
         var prefix = dirty ? "• " : string.Empty;
 
+        // 多标签下切页不会重推 openFile，本地资源（mdasset.local）的基准目录
+        // 跟着活动文档走，这里用 setTitle 带上的路径同步
+        var path = message["path"]?.GetValue<string>();
+        if (!string.IsNullOrEmpty(path))
+        {
+            try
+            {
+                _docDir = Path.GetDirectoryName(Path.GetFullPath(path));
+            }
+            catch
+            {
+                // 路径不合法就保持旧目录
+            }
+        }
+
         if (_form.IsHandleCreated)
         {
             _form.BeginInvoke((Action)(() =>
@@ -446,6 +471,48 @@ internal sealed class HostBridge : IDisposable
 
         Reply(id, new JsonObject { ["ok"] = true });
         OpenPath(path);
+    }
+
+    private static readonly string[] SessionExtensions =
+        { ".md", ".markdown", ".mdown", ".mkd", ".txt" };
+
+    /// <summary>会话恢复：前端把上次的 tab 路径列表交回来，逐个推送 openFile</summary>
+    private void HandleOpenPaths(int id, JsonObject message)
+    {
+        if (message["paths"] is not JsonArray arr)
+        {
+            ReplyError(id, "缺少路径列表");
+            return;
+        }
+
+        var opened = 0;
+        foreach (var item in arr.Take(20))
+        {
+            var raw = item?.GetValue<string>();
+            if (string.IsNullOrEmpty(raw)) continue;
+            string path;
+            try
+            {
+                path = Path.GetFullPath(raw);
+            }
+            catch
+            {
+                continue;
+            }
+
+            // 恢复的是用户自己打开过的文档：限定 markdown/txt 后缀且必须存在，
+            // 不让这条通道变成任意文件读取器
+            if (!File.Exists(path) ||
+                !SessionExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            OpenPath(path);
+            opened += 1;
+        }
+
+        Reply(id, new JsonObject { ["ok"] = true, ["opened"] = opened });
     }
 
     private JsonObject RecentPayload()

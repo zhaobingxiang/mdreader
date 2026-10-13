@@ -39,6 +39,16 @@ export class ViewModeController {
   }
 
   /**
+   * 标签页切换：直接载入该页记住的模式，
+   * 不经过 set 的「上次单栏模式」记忆逻辑，避免污染 Ctrl+E。
+   */
+  loadMode(mode: ViewMode): void {
+    this.mode = mode
+    if (mode !== 'split') this.lastSingle = mode
+    for (const fn of this.listeners) fn(mode)
+  }
+
+  /**
    * Ctrl+E：编辑 ↔ 预览。
    * 当前在分屏时，回到上次用的单栏模式。
    */

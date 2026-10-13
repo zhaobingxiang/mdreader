@@ -1,6 +1,6 @@
 import { EditorView } from '@codemirror/view'
 import { undo, redo } from '@codemirror/commands'
-import { MarkdownDocument } from './core/document'
+import { MarkdownDocument, type DocumentEvent } from './core/document'
 import { fsAccessAdapter, isFsAccessSupported } from './core/file/fs-access'
 import {
   callHost,
@@ -11,11 +11,13 @@ import {
   onHostEvent,
   revealInExplorer,
   webviewAdapter,
+  type HostFilePayload,
 } from './core/file/webview'
-import { clearDraft, loadDraft, saveDraft } from './core/draft'
-import { currentTheme, toggleTheme } from './core/theme'
+import { clearDraft, listDrafts, saveDraft } from './core/draft'
+import { applyThemeSetting, currentTheme, type ThemeName } from './core/theme'
 import { collectTodos, computeStats } from './core/stats'
-import { ViewModeController, type ViewMode } from './core/view-mode'
+import { getSettings, initSettings, patchSettings, subscribeSettings } from './core/settings'
+import { ViewModeController, VIEW_MODES, type ViewMode } from './core/view-mode'
 import { WELCOME_DOC } from './core/welcome'
 import { createZoomController, formatZoom, MAX_ZOOM, MIN_ZOOM } from './core/zoom'
 import { createEditor, type EditorHandle } from './editor/create'
@@ -28,8 +30,10 @@ import { PreviewPipeline } from './render/pipeline'
 import { debounce } from './render/util'
 import { showConfirmModal, showDiffModal } from './ui/diff-view'
 import { showMessageModal } from './ui/modal'
+import { showSettingsModal } from './ui/settings-modal'
 import { clearPreviewHighlight, highlightPreviewRange, mapPreviewSelection } from './ui/highlight'
 import { createLayout } from './ui/layout'
+import { renderTabs } from './ui/tabbar'
 import {
   highlightOutline,
   renderHints,
@@ -41,45 +45,44 @@ import {
 
 const RENDER_DEBOUNCE_MS = 180
 const FILE_NAME_RE = /\.(md|markdown|mdown|mkd|txt)$/i
+const SESSION_KEY = 'mdreader.session'
+
+/** 一个标签页：文档模型 + 视图模式 + 编辑器状态与滚动位置的快照 */
+interface TabRecord {
+  id: number
+  doc: MarkdownDocument
+  mode: ViewMode
+  /** 切走时保存的编辑器状态（含撤销历史）；null 表示还没挂载过或内容被整体重建 */
+  editorState: import('@codemirror/state').EditorState | null
+  editorScrollTop: number
+  previewScrollTop: number
+  /** 未动的欢迎页占位，可被第一个打开的文件接管 */
+  welcome: boolean
+}
 
 export function bootstrapApp(mount: HTMLElement): void {
   const layout = createLayout(mount)
-  const model = new MarkdownDocument()
-  const viewMode = new ViewModeController('split')
   const engine = new MarkdownEngine(createDefaultRegistry())
   const pipeline = new PreviewPipeline(engine)
   /** 跑在 .NET + WebView2 桌面壳里时，文件能力由宿主提供 */
   const inDesktopShell = isWebViewHost()
   /** md 里相对路径的图片等资源，桌面壳交给宿主按文档目录解析；浏览器版没有这个能力 */
   const assetBaseDir = inDesktopShell ? DESKTOP_ASSET_BASE : ''
-  model.setAdapter(inDesktopShell ? webviewAdapter : fsAccessAdapter)
+  const adapter = inDesktopShell ? webviewAdapter : fsAccessAdapter
 
-  // ---------- 状态提示与界面持久化 ----------
+  // ---------- 状态提示 ----------
 
   let noticeTimer = 0
   /** 短暂提示：几秒后自动消失，避免状态栏被旧消息占住 */
   function flashNotice(message: string | null): void {
-    model.setNotice(message)
+    activeDoc().setNotice(message)
     window.clearTimeout(noticeTimer)
     if (message) {
-      noticeTimer = window.setTimeout(() => model.setNotice(null), 4000)
+      noticeTimer = window.setTimeout(() => activeDoc().setNotice(null), 4000)
     }
   }
 
-  /** 丢弃当前未保存修改前的确认。返回 false 表示用户取消 */
-  async function confirmDiscard(): Promise<boolean> {
-    if (!model.snapshot.dirty) return true
-    return showMessageModal({
-      title: '未保存的修改',
-      message: '当前文档有未保存的修改，继续将丢失这些改动。',
-      confirmLabel: '继续',
-      cancelLabel: '取消',
-    })
-  }
-
   interface UiState {
-    outlineCollapsed: boolean
-    hintsCollapsed: boolean
     editorWidthPx: number | null
   }
 
@@ -91,8 +94,6 @@ export function bootstrapApp(mount: HTMLElement): void {
       if (!raw) return null
       const parsed = JSON.parse(raw) as Partial<UiState>
       return {
-        outlineCollapsed: !!parsed.outlineCollapsed,
-        hintsCollapsed: !!parsed.hintsCollapsed,
         editorWidthPx: typeof parsed.editorWidthPx === 'number' ? parsed.editorWidthPx : null,
       }
     } catch {
@@ -106,33 +107,154 @@ export function bootstrapApp(mount: HTMLElement): void {
       const width = Number.parseInt(widthRaw, 10)
       localStorage.setItem(
         UI_KEY,
-        JSON.stringify({
-          outlineCollapsed: layout.outlinePanel.classList.contains('is-collapsed'),
-          hintsCollapsed: layout.hintPanel.classList.contains('is-collapsed'),
-          editorWidthPx: Number.isFinite(width) ? width : null,
-        } satisfies UiState),
+        JSON.stringify({ editorWidthPx: Number.isFinite(width) ? width : null } satisfies UiState),
       )
     } catch {
       // 存储配额满 / 无痕模式下失败都不影响使用
     }
   }
 
-  // ---------- 草稿 ----------
+  // ---------- 标签页 ----------
 
-  const scheduleDraft = debounce(() => {
-    if (!model.snapshot.dirty) {
-      clearDraft()
+  const tabs: TabRecord[] = []
+  let activeTab: TabRecord | null = null
+  let tabSeq = 1
+
+  function activeDoc(): MarkdownDocument {
+    if (!activeTab) throw new Error('还没有活动标签页')
+    return activeTab.doc
+  }
+
+  function tabPath(t: TabRecord): string {
+    return t.doc.snapshot.rawPath
+  }
+
+  function hasAnyDirty(): boolean {
+    return tabs.some((t) => t.doc.snapshot.dirty)
+  }
+
+  /** 视图层的文档事件订阅：只关心当前标签页；其他页的变更只刷新标签栏角标 */
+  const modelListeners = new Set<(e: DocumentEvent) => void>()
+
+  function emitDocEvent(e: DocumentEvent): void {
+    for (const fn of modelListeners) fn(e)
+  }
+
+  function routeDocEvent(t: TabRecord, e: DocumentEvent): void {
+    if (t === activeTab) {
+      emitDocEvent(e)
       return
     }
-    const text = model.currentText
-    if (!text.trim()) return
-    saveDraft({ name: model.snapshot.name, path: '', text, savedAt: Date.now() })
+    if (e.type === 'text' || e.type === 'meta' || e.type === 'external') {
+      renderTabBar()
+    }
+  }
+
+  function createTab(mode: ViewMode): TabRecord {
+    const doc = new MarkdownDocument()
+    doc.setAdapter(adapter)
+    const t: TabRecord = {
+      id: tabSeq++,
+      doc,
+      mode,
+      editorState: null,
+      editorScrollTop: 0,
+      previewScrollTop: 0,
+      welcome: false,
+    }
+    doc.subscribe((e) => routeDocEvent(t, e))
+    tabs.push(t)
+    renderTabBar()
+    return t
+  }
+
+  function createWelcomeTab(): TabRecord {
+    const t = createTab(getSettings().defaultMode)
+    t.doc.createUntitled()
+    t.doc.setText(WELCOME_DOC)
+    t.doc.markSaved()
+    t.welcome = true
+    return t
+  }
+
+  // 对上层逻辑而言「当前文档」仍是唯一的 model：委托到活动标签页，
+  // 事件仍经 modelListeners 分发
+  const model = {
+    subscribe(fn: (e: DocumentEvent) => void): () => void {
+      modelListeners.add(fn)
+      return () => {
+        modelListeners.delete(fn)
+      }
+    },
+    get snapshot() {
+      return activeDoc().snapshot
+    },
+    get currentText(): string {
+      return activeDoc().currentText
+    },
+    get pendingExternalText(): string | null {
+      return activeDoc().pendingExternalText
+    },
+    setNotice(message: string | null): void {
+      activeDoc().setNotice(message)
+    },
+    setText(text: string): void {
+      activeDoc().setText(text)
+    },
+    acceptExternal(): void {
+      activeDoc().acceptExternal()
+    },
+    dismissExternal(): void {
+      activeDoc().dismissExternal()
+    },
+    async save(): Promise<boolean> {
+      const ok = await activeDoc().save()
+      if (ok && activeTab) activeTab.editorState = null
+      return ok
+    },
+  }
+
+  const scheduleDraft = debounce(() => {
+    const doc = activeDoc()
+    const snapshot = doc.snapshot
+    if (!snapshot.dirty) {
+      clearDraft(snapshot.rawPath, snapshot.name)
+      return
+    }
+    if (!snapshot.text.trim()) return
+    saveDraft({
+      name: snapshot.name,
+      path: snapshot.rawPath,
+      text: snapshot.text,
+      savedAt: Date.now(),
+    })
   }, 1200)
 
-  /** 编辑器和滚动同步就绪标志。zoom 的 subscribe 会立即同步回调一次，
+  const scheduleSessionSave = debounce(() => {
+    try {
+      const payload = {
+        tabs: tabs.map((t) => ({ path: tabPath(t), mode: t.mode })),
+        activeIndex: activeTab ? tabs.indexOf(activeTab) : -1,
+      }
+      localStorage.setItem(SESSION_KEY, JSON.stringify(payload))
+    } catch {
+      // 存不下就算了
+    }
+  }, 400)
+
+  /** 宿主恢复会话时按路径预置每个 tab 的模式 */
+  let restoreModes = new Map<string, ViewMode>()
+  let restoreExpected = 0
+  let restoreWantActive = ''
+
+  // ---------- 缩放（值持久化在设置里） ----------
+
+  /** 跑在编辑器创建之前，zoom 的 subscribe 会立即同步回调一次，
    *  它引用的 let 必须在此之前声明，否则回调会踩进暂时性死区 */
   let editorReady = false
-  const zoom = createZoomController()
+  const zoom = createZoomController(getSettings().zoom, (factor) => {
+    patchSettings({ zoom: factor })
+  })
   zoom.subscribe((factor) => {
     layout.zoomValue.textContent = formatZoom(factor)
     // subscribe 会立即同步回调一次，那时编辑器还没创建，先跳过
@@ -144,6 +266,10 @@ export function bootstrapApp(mount: HTMLElement): void {
 
   let outline: OutlineNode[] = []
   let activeOutlineId: string | null = null
+  /** 待应用给预览区的滚动位置（切 tab 后等渲染完成再落） */
+  let pendingPreviewScroll: number | null = null
+  /** 编辑器重建 / 状态切换期间，doc-switched 处理器要改走恢复路径 */
+  let restoringTab = false
   let editor!: EditorHandle
   /** 最近一次分析出的书写提示，供「应用建议」按索引取用 */
   let currentHints: HintEntry[] = []
@@ -197,14 +323,12 @@ export function bootstrapApp(mount: HTMLElement): void {
     suppressSelectionSync = false
   }, 180)
 
-  model.createUntitled('未命名.md')
-  model.setText(WELCOME_DOC)
-  // 欢迎文档是内置内容，不该以「未保存」状态开场
-  model.markSaved()
+  const welcomeTab = createWelcomeTab()
+  activeTab = welcomeTab
 
   editor = createEditor({
     parent: layout.editorHost,
-    initialText: model.currentText,
+    initialText: welcomeTab.doc.currentText,
     callbacks: {
       onChange: (text) => model.setText(text),
       onCursor: (line, column, selected) => {
@@ -240,6 +364,10 @@ export function bootstrapApp(mount: HTMLElement): void {
     outline = result.outline
     renderOutline(layout.outlineList, outline, activeOutlineId)
     scrollSync.refreshAnchors()
+    if (pendingPreviewScroll !== null) {
+      layout.previewPane.scrollTop = pendingPreviewScroll
+      pendingPreviewScroll = null
+    }
     updateHints()
     updateStatus()
   }
@@ -276,7 +404,15 @@ export function bootstrapApp(mount: HTMLElement): void {
       : `${snapshot.name} — mdreader`
     layout.dirtyDot.hidden = !snapshot.dirty
     layout.statNotice.textContent = snapshot.notice ?? ''
-    if (inDesktopShell) notifyTitle(snapshot.name, snapshot.dirty, currentTheme() === 'dark')
+    if (inDesktopShell && activeTab) {
+      // 关闭拦截看的是「所有标签页有没有脏」，资源目录要跟着当前页走
+      notifyTitle(
+        snapshot.name,
+        hasAnyDirty(),
+        currentTheme() === 'dark',
+        tabPath(activeTab),
+      )
+    }
   }
 
   function currentLineInfos(): LineInfo[] {
@@ -307,16 +443,185 @@ export function bootstrapApp(mount: HTMLElement): void {
     highlightOutline(layout.outlineList, id)
   }, 90)
 
+  // ---------- 标签页切换与关闭 ----------
+
+  function renderTabBar(): void {
+    renderTabs(
+      layout.tabList,
+      tabs.map((t) => ({
+        id: t.id,
+        name: t.doc.snapshot.name,
+        dirty: t.doc.snapshot.dirty,
+        active: t === activeTab,
+        path: tabPath(t),
+      })),
+    )
+  }
+
+  function snapshotActive(): void {
+    if (!activeTab || !tabs.includes(activeTab)) return
+    activeTab.editorState = editor.currentState()
+    activeTab.editorScrollTop = editor.view.scrollDOM.scrollTop
+    activeTab.previewScrollTop = layout.previewPane.scrollTop
+  }
+
+  /** 把活动标签页文档挂到界面上：恢复状态快照，或整体重建 */
+  function bindActiveTab(): void {
+    restoringTab = true
+    emitDocEvent({ type: 'doc-switched', snapshot: activeDoc().snapshot })
+    restoringTab = false
+    if (activeTab) {
+      viewMode.loadMode(activeTab.mode)
+      pendingPreviewScroll = activeTab.previewScrollTop
+      if (activeTab.mode !== 'preview') editor.focus()
+    }
+    scheduleOutlineSync()
+    scheduleSessionSave()
+  }
+
+  function switchTab(id: number): void {
+    const t = tabs.find((x) => x.id === id)
+    if (!t || t === activeTab) {
+      renderTabBar()
+      return
+    }
+    snapshotActive()
+    activeTab = t
+    bindActiveTab()
+    renderTabBar()
+  }
+
+  function removeTab(t: TabRecord): void {
+    const idx = tabs.indexOf(t)
+    if (idx < 0) return
+    t.doc.dispose()
+    tabs.splice(idx, 1)
+    if (t === activeTab) {
+      if (tabs.length === 0) {
+        activeTab = createWelcomeTab()
+      } else {
+        activeTab = tabs[Math.min(idx, tabs.length - 1)]
+      }
+      bindActiveTab()
+    }
+    renderTabBar()
+    updateStatus()
+    scheduleSessionSave()
+  }
+
+  async function closeTab(id: number): Promise<void> {
+    const t = tabs.find((x) => x.id === id)
+    if (!t) return
+    if (t.doc.snapshot.dirty) {
+      const ok = await showMessageModal({
+        title: '关闭标签页',
+        message: `「${t.doc.snapshot.name}」有未保存的修改，关闭将丢失这些改动。`,
+        confirmLabel: '关闭',
+        cancelLabel: '取消',
+      })
+      if (!ok) return
+    }
+    // 用户确认丢弃后，草稿也不该再冒出来
+    clearDraft(tabPath(t), t.doc.snapshot.name)
+    removeTab(t)
+  }
+
+  function cycleTab(step: number): void {
+    if (!activeTab || tabs.length < 2) return
+    const idx = (tabs.indexOf(activeTab) + step + tabs.length) % tabs.length
+    const next = tabs[idx]
+    if (next) switchTab(next.id)
+  }
+
+  // ---------- 打开文件（宿主推送 / 选择器 / 拖入） ----------
+
+  /** 当前页是没人动过的欢迎页时，就地接管而不是新开标签 */
+  function canTakeOverWelcome(): boolean {
+    return tabs.length === 1 && !!activeTab?.welcome && !activeTab.doc.snapshot.dirty
+  }
+
+  function noteRestoredTab(): void {
+    if (restoreExpected <= 0) return
+    restoreExpected -= 1
+    if (restoreExpected === 0 && restoreWantActive) {
+      const t = tabs.find((x) => tabPath(x) === restoreWantActive)
+      if (t && t !== activeTab) switchTab(t.id)
+    }
+  }
+
+  async function openFromHost(payload: HostFilePayload): Promise<void> {
+    const existing = tabs.find((t) => tabPath(t) === payload.path)
+    if (existing) {
+      // 双击已打开的文件：切过去即可；本地没改动时顺带刷新成磁盘上的新内容
+      if (existing !== activeTab) switchTab(existing.id)
+      if (!existing.doc.snapshot.dirty && payload.text !== existing.doc.currentText) {
+        existing.doc.setText(payload.text)
+        existing.doc.markSaved()
+      }
+      noteRestoredTab()
+      return
+    }
+    if (canTakeOverWelcome() && activeTab) {
+      activeTab.welcome = false
+      await activeTab.doc.open(createHostHandle(payload))
+      noteRestoredTab()
+      return
+    }
+    const mode = restoreModes.get(payload.path) ?? getSettings().defaultMode
+    const t = createTab(mode)
+    await t.doc.open(createHostHandle(payload))
+    // 必须走 switchTab：先把界面绑定到新页，不能提前改 activeTab（会让 switchTab 提前返回）
+    switchTab(t.id)
+    noteRestoredTab()
+  }
+
+  async function openFile(): Promise<void> {
+    if (inDesktopShell || isFsAccessSupported()) {
+      const t = createTab(getSettings().defaultMode)
+      switchTab(t.id)
+      const opened = await t.doc.openViaPicker()
+      if (!opened) {
+        removeTab(t)
+        return
+      }
+      t.welcome = false
+      // 选中了已打开的文件：合并回原标签页
+      const dup = tabs.find((x) => x !== t && tabPath(x) === tabPath(t))
+      if (dup) {
+        removeTab(t)
+        switchTab(dup.id)
+        return
+      }
+      scheduleSessionSave()
+      flashNotice('已打开')
+      return
+    }
+    flashNotice('当前浏览器不支持直接打开本地文件，请把文件拖进窗口')
+  }
+
+  async function saveFile(): Promise<void> {
+    const ok = await model.save()
+    // 用模型刚写入的提示文案，同时重启自动消失计时
+    if (ok) flashNotice(model.snapshot.notice ?? '已保存')
+  }
+
   // ---------- 文档事件 ----------
 
   model.subscribe((event) => {
     if (event.type === 'doc-switched') {
-      // 打开 / 切换文档：重建编辑器状态，清空撤销历史
-      editor.resetDoc(model.currentText)
+      if (restoringTab && activeTab?.editorState) {
+        // 切回标签页：还原撤销历史与选区
+        editor.useState(activeTab.editorState)
+        editor.view.scrollDOM.scrollTop = activeTab.editorScrollTop
+      } else {
+        // 打开 / 重建文档：清空撤销历史，防止撤销跨文档回退
+        editor.resetDoc(model.currentText)
+        if (activeTab) activeTab.editorState = null
+      }
       scheduleRender()
       clearPreviewHighlight(layout.previewHost)
-      // 切文档必然先经过丢弃确认，旧文档的草稿就此作废
-      clearDraft()
+      activeOutlineId = null
+      layout.externalBanner.hidden = model.snapshot.pendingExternal === null
       updateStatus()
       return
     }
@@ -324,6 +629,7 @@ export function bootstrapApp(mount: HTMLElement): void {
       if (editor.getText() !== model.currentText) editor.setText(model.currentText)
       scheduleRender()
       scheduleDraft()
+      renderTabBar()
       return
     }
     if (event.type === 'external') {
@@ -332,8 +638,12 @@ export function bootstrapApp(mount: HTMLElement): void {
       return
     }
     layout.externalBanner.hidden = model.snapshot.pendingExternal === null
-    // 保存成功（dirty 被清掉）后草稿就没有意义了
-    if (!model.snapshot.dirty) clearDraft()
+    // 保存成功（dirty 被清掉）后这份草稿就没有意义了
+    if (!model.snapshot.dirty) {
+      clearDraft(model.snapshot.rawPath, model.snapshot.name)
+      scheduleSessionSave()
+    }
+    renderTabBar()
     updateStatus()
   })
 
@@ -343,20 +653,24 @@ export function bootstrapApp(mount: HTMLElement): void {
     layout.root.classList.add('is-desktop')
     onHostEvent((event) => {
       if (event.event === 'openFile') {
-        // 双击 .md、启动参数、第二个实例的转发都走这里
-        void (async () => {
-          if (!(await confirmDiscard())) return
-          await model.open(createHostHandle(event))
-        })()
+        // 双击 .md、启动参数、第二个实例的转发、会话恢复都走这里 → 落成标签页
+        void openFromHost(event).catch((err: unknown) => {
+          model.setNotice(`打开失败：${(err as Error).message}`)
+        })
       } else if (event.event === 'error') {
         model.setNotice(event.message)
       } else if (event.event === 'windowState') {
         setMaximizedUi(event.maximized)
       } else if (event.event === 'confirmExit') {
         void (async () => {
+          const dirtyNames = tabs.filter((t) => t.doc.snapshot.dirty).map((t) => t.doc.snapshot.name)
+          const message =
+            dirtyNames.length > 0
+              ? `以下文档有未保存的修改：${dirtyNames.join('、')}。\n确定退出吗？`
+              : '确定退出 mdreader 吗？'
           const proceed = await showMessageModal({
             title: '退出 mdreader',
-            message: '当前文档有未保存的修改，确定退出吗？',
+            message,
             confirmLabel: '退出',
             cancelLabel: '继续编辑',
           })
@@ -388,7 +702,9 @@ export function bootstrapApp(mount: HTMLElement): void {
     void callHost('winMax').catch(() => undefined)
   })
 
-  // ---------- 视图模式 ----------
+  // ---------- 视图模式（每标签页一个） ----------
+
+  const viewMode = new ViewModeController(welcomeTab.mode)
 
   function applyMode(mode: ViewMode): void {
     layout.root.dataset.mode = mode
@@ -407,31 +723,19 @@ export function bootstrapApp(mount: HTMLElement): void {
     if (mode !== 'edit') scheduleRender()
   }
 
-  viewMode.subscribe(applyMode)
+  viewMode.subscribe((mode) => {
+    applyMode(mode)
+    if (activeTab && activeTab.mode !== mode) {
+      activeTab.mode = mode
+      scheduleSessionSave()
+    }
+  })
 
   layout.modeSwitch.addEventListener('click', (event) => {
     const btn = (event.target as HTMLElement).closest<HTMLElement>('.segmented__item')
     const mode = btn?.dataset.mode as ViewMode | undefined
     if (mode) viewMode.set(mode)
   })
-
-  // ---------- 文件操作 ----------
-
-  async function openFile(): Promise<void> {
-    if (!(await confirmDiscard())) return
-    if (inDesktopShell || isFsAccessSupported()) {
-      const opened = await model.openViaPicker()
-      if (opened) flashNotice('已打开')
-      return
-    }
-    flashNotice('当前浏览器不支持直接打开本地文件，请把文件拖进窗口')
-  }
-
-  async function saveFile(): Promise<void> {
-    const ok = await model.save()
-    // 用模型刚写入的提示文案，同时重启自动消失计时
-    if (ok) flashNotice(model.snapshot.notice ?? '已保存')
-  }
 
   // ---------- 顶栏与导出 ----------
 
@@ -512,13 +816,12 @@ export function bootstrapApp(mount: HTMLElement): void {
       return
     }
 
-    // 最近文件条目（路径只回给宿主做白名单校验，由宿主真正打开）
+    // 最近文件条目（路径只回给宿主做白名单校验，由宿主推送 openFile 落成标签页）
     const recentItem = target.closest<HTMLElement>('[data-open-recent]')
     if (recentItem) {
       layout.openList.hidden = true
       const path = recentItem.dataset.openRecent ?? ''
       if (inDesktopShell && path) {
-        // 打开结果由宿主推送 openFile 事件回来，丢弃确认在那一步统一做
         callHost('openRecent', { path }).catch((err: unknown) => {
           model.setNotice(`打开失败：${(err as Error).message}`)
         })
@@ -549,27 +852,39 @@ export function bootstrapApp(mount: HTMLElement): void {
         layout.openList.hidden = true
         void openFile()
         break
-      case 'toggle-theme':
-        toggleTheme()
-        // Mermaid 图表配色不会随 CSS 变量自动切换，需要重渲染
-        void renderAll()
+      case 'tab-new':
+        void openFile()
         break
-      case 'new':
-        void confirmDiscard().then((ok) => {
-          if (ok) model.createUntitled()
-        })
+      case 'toggle-theme': {
+        const next = currentTheme() === 'dark' ? 'light' : 'dark'
+        patchSettings({ theme: next })
         break
+      }
+      case 'new': {
+        const t = createTab(getSettings().defaultMode)
+        t.doc.createUntitled()
+        switchTab(t.id)
+        editor.focus()
+        break
+      }
       case 'save':
         void saveFile()
         break
-      case 'toggle-outline':
+      case 'settings':
+        showSettingsModal(inDesktopShell)
+        break
+      case 'toggle-outline': {
         layout.outlinePanel.classList.toggle('is-collapsed')
-        saveUiState()
+        patchSettings({
+          outlineVisible: !layout.outlinePanel.classList.contains('is-collapsed'),
+        })
         break
-      case 'toggle-hints':
+      }
+      case 'toggle-hints': {
         layout.hintPanel.classList.toggle('is-collapsed')
-        saveUiState()
+        patchSettings({ hintsVisible: !layout.hintPanel.classList.contains('is-collapsed') })
         break
+      }
       case 'export':
         if (menuList) menuList.hidden = !menuList.hidden
         layout.openList.hidden = true
@@ -660,6 +975,28 @@ export function bootstrapApp(mount: HTMLElement): void {
   document.addEventListener('click', (event) => {
     if (!layout.exportMenu.contains(event.target as Node) && menuList) menuList.hidden = true
     if (!layout.openMenu.contains(event.target as Node)) layout.openList.hidden = true
+  })
+
+  // ---------- 标签栏交互 ----------
+
+  layout.tabList.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement
+    const closeBtn = target.closest<HTMLElement>('[data-tab-close]')
+    if (closeBtn) {
+      void closeTab(Number(closeBtn.dataset.tabClose))
+      return
+    }
+    const tabEl = target.closest<HTMLElement>('[data-tab]')
+    if (tabEl) switchTab(Number(tabEl.dataset.tab))
+  })
+  layout.tabList.addEventListener('auxclick', (event) => {
+    const mouse = event as MouseEvent
+    if (mouse.button !== 1) return
+    const tabEl = (event.target as HTMLElement).closest<HTMLElement>('[data-tab]')
+    if (tabEl) {
+      mouse.preventDefault()
+      void closeTab(Number(tabEl.dataset.tab))
+    }
   })
 
   // ---------- 侧栏交互 ----------
@@ -819,9 +1156,12 @@ export function bootstrapApp(mount: HTMLElement): void {
       flashNotice('只支持 .md / .markdown / .txt 文件')
       return
     }
+    // 拖入一律开新标签页，当前页的未保存内容不受影响
+    const t = createTab(getSettings().defaultMode)
     void (async () => {
-      if (!(await confirmDiscard())) return
-      await model.openDroppedFile(file)
+      await t.doc.openDroppedFile(file)
+      switchTab(t.id)
+      scheduleSessionSave()
     })()
   })
 
@@ -870,15 +1210,40 @@ export function bootstrapApp(mount: HTMLElement): void {
     }
     if (key === 'n') {
       event.preventDefault()
-      void confirmDiscard().then((ok) => {
-        if (ok) model.createUntitled()
-      })
+      const t = createTab(getSettings().defaultMode)
+      t.doc.createUntitled()
+      switchTab(t.id)
+      editor.focus()
+      return
+    }
+    if (key === 'p') {
+      event.preventDefault()
+      void printPreview()
+      return
+    }
+    if (key === 'w') {
+      event.preventDefault()
+      if (activeTab) void closeTab(activeTab.id)
+      return
+    }
+    if (key === 'tab') {
+      event.preventDefault()
+      cycleTab(event.shiftKey ? -1 : 1)
+      return
+    }
+    if (/^[1-9]$/.test(event.key)) {
+      const idx = Number(event.key) - 1
+      if (idx < tabs.length) {
+        event.preventDefault()
+        switchTab(tabs[idx].id)
+      }
+      return
     }
   })
 
   // Ctrl + 滚轮缩放（两个环境都拦下来自己处理，只缩内容区字号）。
   // 桌面壳已在宿主侧关闭内置缩放（IsZoomControlEnabled = false），
-  // 否则它会连同菜单栏一起缩放。
+  // 否则它会连同菜单栏一起放大缩小
   document.addEventListener(
     'wheel',
     (event) => {
@@ -891,49 +1256,139 @@ export function bootstrapApp(mount: HTMLElement): void {
   )
 
   window.addEventListener('beforeunload', (event) => {
-    if (!model.snapshot.dirty) return
+    if (!hasAnyDirty()) return
     event.preventDefault()
     event.returnValue = ''
+  })
+
+  // ---------- 设置联动 ----------
+
+  let lastTheme: ThemeName = currentTheme()
+  subscribeSettings((s) => {
+    applyThemeSetting(s.theme)
+    // Mermaid 图表配色不跟随 CSS 变量，深浅切换后要重渲染
+    if (currentTheme() !== lastTheme) {
+      lastTheme = currentTheme()
+      void renderAll()
+    }
+    if (Math.abs(s.zoom - zoom.get()) > 0.001) zoom.set(s.zoom)
+    const collapsed = layout.outlinePanel.classList.contains('is-collapsed')
+    if (collapsed === s.outlineVisible) {
+      layout.outlinePanel.classList.toggle('is-collapsed', !s.outlineVisible)
+    }
+    const hintsCollapsed = layout.hintPanel.classList.contains('is-collapsed')
+    if (hintsCollapsed === s.hintsVisible) {
+      layout.hintPanel.classList.toggle('is-collapsed', !s.hintsVisible)
+    }
   })
 
   // ---------- 启动 ----------
 
   layout.previewPane.addEventListener('scroll', () => scheduleOutlineSync(), { passive: true })
 
-  // 恢复上次的面板折叠状态与分栏宽度
+  // 恢复上次的面板折叠状态、分栏宽度与缩放（都来自设置 + ui 键）
   const restored = readUiState()
-  if (restored) {
-    layout.outlinePanel.classList.toggle('is-collapsed', restored.outlineCollapsed)
-    layout.hintPanel.classList.toggle('is-collapsed', restored.hintsCollapsed)
-    if (restored.editorWidthPx) {
-      layout.root.style.setProperty('--editor-width', `${restored.editorWidthPx}px`)
-      layout.root.classList.add('is-resized')
-    }
+  if (restored?.editorWidthPx) {
+    layout.root.style.setProperty('--editor-width', `${restored.editorWidthPx}px`)
+    layout.root.classList.add('is-resized')
   }
 
-  applyMode(viewMode.current)
   void renderAll()
   updateStatus()
 
-  // 崩溃 / 误关后留下的未保存草稿，询问是否恢复
-  void (async () => {
-    const draft = loadDraft()
-    if (!draft || !draft.text.trim() || draft.text === WELCOME_DOC) return
-    const when = new Date(draft.savedAt).toLocaleString()
+  // 宿主真源 → 会话恢复 → 草稿检查，依次进行
+  void initSettings()
+    .then(() => restoreSession())
+    .catch(() => undefined)
+
+  function validMode(v: unknown): v is ViewMode {
+    return typeof v === 'string' && (VIEW_MODES as string[]).includes(v)
+  }
+
+  async function restoreSession(): Promise<void> {
+    if (!inDesktopShell || !getSettings().restoreSession) {
+      await runDraftCheck()
+      return
+    }
+    let entries: { path: string; mode: ViewMode }[] = []
+    try {
+      const raw = localStorage.getItem(SESSION_KEY)
+      if (raw) {
+        const parsed = JSON.parse(raw) as {
+          tabs?: { path?: unknown; mode?: unknown }[]
+          activeIndex?: number
+        }
+        entries = (parsed.tabs ?? [])
+          .filter((e) => typeof e.path === 'string' && e.path)
+          .map((e) => ({ path: e.path as string, mode: validMode(e.mode) ? e.mode : 'preview' }))
+        const activeIndex = typeof parsed.activeIndex === 'number' ? parsed.activeIndex : -1
+        restoreWantActive = entries[activeIndex]?.path ?? ''
+      }
+    } catch {
+      entries = []
+    }
+    restoreModes = new Map(entries.map((e) => [e.path, e.mode]))
+    const paths = entries.map((e) => e.path).filter((p) => !tabs.some((t) => tabPath(t) === p))
+    if (paths.length > 0) {
+      restoreExpected = paths.length
+      callHost('openPaths', { paths })
+        .catch(() => {
+          restoreExpected = 0
+        })
+        .finally(() => void runDraftCheck())
+      // 兜底：个别路径打开失败时计数不归零，超时后把活动页落回上次位置
+      window.setTimeout(() => {
+        if (restoreExpected > 0) {
+          restoreExpected = 0
+          const t = tabs.find((x) => tabPath(x) === restoreWantActive)
+          if (t && t !== activeTab) switchTab(t.id)
+        }
+      }, 2500)
+    } else {
+      const t = tabs.find((x) => tabPath(x) === restoreWantActive)
+      if (t && t !== activeTab) switchTab(t.id)
+      await runDraftCheck()
+    }
+  }
+
+  let draftCheckShown = false
+  async function runDraftCheck(): Promise<void> {
+    if (draftCheckShown) return
+    draftCheckShown = true
+    const drafts = listDrafts().filter((d) => {
+      const t = d.path ? tabs.find((x) => tabPath(x) === d.path) : undefined
+      if (t && t.doc.currentText === d.text) {
+        clearDraft(d.path, d.name)
+        return false
+      }
+      return d.text.trim() !== '' && d.text !== WELCOME_DOC
+    })
+    if (drafts.length === 0) return
+    const names = drafts.map((d) => `「${d.name}」`).join('、')
+    const when = new Date(Math.max(...drafts.map((d) => d.savedAt))).toLocaleString()
     const restore = await showMessageModal({
       title: '恢复未保存的草稿',
-      message: `发现上次未保存的草稿「${draft.name}」（${when}）。\n「恢复」将用它替换当前内容；「删除」将丢弃这份草稿。`,
+      message: `发现 ${drafts.length} 份未保存的草稿：${names}（${when}）。\n「恢复」将把内容写回对应文档；「删除」将丢弃这些草稿。`,
       confirmLabel: '恢复草稿',
       cancelLabel: '删除草稿',
     })
-    if (restore) {
-      model.createUntitled(draft.name)
-      model.setText(draft.text)
-      flashNotice('已恢复上次未保存的草稿')
-    } else {
-      clearDraft()
+    for (const d of drafts) {
+      if (restore) {
+        const t = d.path ? tabs.find((x) => tabPath(x) === d.path) : undefined
+        if (t) {
+          if (t !== activeTab) switchTab(t.id)
+          t.doc.setText(d.text)
+        } else {
+          const nt = createTab(getSettings().defaultMode)
+          nt.doc.createUntitled(d.name)
+          nt.doc.setText(d.text)
+          switchTab(nt.id)
+        }
+      }
+      clearDraft(d.path, d.name)
     }
-  })()
+    flashNotice(restore ? `已恢复 ${drafts.length} 份草稿` : '已删除旧草稿')
+  }
 
   editor.focus()
 }
