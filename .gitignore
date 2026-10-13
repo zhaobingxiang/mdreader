@@ -3,7 +3,6 @@ dist
 dist-ssr
 *.local
 .DS_Store
-src-tauri/target
 .vite
 .preview
 

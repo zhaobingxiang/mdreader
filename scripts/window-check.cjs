@@ -5,7 +5,8 @@
 const { chromium } = require('playwright-core')
 
 const CDP = process.env.CDP_URL || 'http://127.0.0.1:9222'
-const OUT = 'D:/ide/mdreader/.preview'
+const path = require('path')
+const OUT = path.resolve(__dirname, '../.preview')
 
 const ok = (name, pass, extra) =>
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${extra ? '  ' + extra : ''}`)

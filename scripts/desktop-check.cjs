@@ -7,8 +7,10 @@
  *   desktop\publish\mdreader.exe
  */
 const { chromium } = require('playwright-core')
+const path = require('path')
 
-const OUT = 'D:/ide/mdreader/.preview'
+const ROOT = path.resolve(__dirname, '..')
+const OUT = path.join(ROOT, '.preview').replace(/\\/g, '/')
 const CDP = process.env.CDP_URL || 'http://127.0.0.1:9222'
 
 ;(async () => {
@@ -66,18 +68,18 @@ const CDP = process.env.CDP_URL || 'http://127.0.0.1:9222'
   const pong = await call(99001, 'ping')
   console.log(`ping        -> ${JSON.stringify(pong)}`)
 
-  const read = await call(99002, 'readFile', { path: 'D:/ide/mdreader/package.json' })
+  const read = await call(99002, 'readFile', { path: path.join(ROOT, 'package.json') })
   console.log(
     `readFile    -> ok=${read.ok} name=${read.result?.name} 长度=${read.result?.text?.length}`,
   )
 
   const write = await call(99003, 'writeFile', {
-    path: 'D:/ide/mdreader/.preview/bridge-test.md',
+    path: path.join(ROOT, '.preview', 'bridge-test.md'),
     text: '# 桥接写入测试\n\n这段内容由 .NET 宿主写入磁盘。\n',
   })
   console.log(`writeFile   -> ok=${write.ok} path=${write.result?.path ?? write.error}`)
 
-  const missing = await call(99004, 'readFile', { path: 'D:/ide/mdreader/不存在的文件.md' })
+  const missing = await call(99004, 'readFile', { path: path.join(ROOT, '不存在的文件.md') })
   console.log(`readFile(缺失) -> ok=${missing.ok} error=${missing.error}`)
 
   await page.screenshot({ path: `${OUT}/desktop-shell.png` })
