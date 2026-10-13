@@ -21,6 +21,8 @@ export interface AppSettings {
   restoreSession: boolean
   /** 记住窗口大小和位置（仅桌面壳） */
   rememberWindow: boolean
+  /** 打印页眉页脚（日期/标题/网址/页码）默认开启（仅桌面壳，重启后生效） */
+  printHeaderFooter: boolean
   zoom: number
   outlineVisible: boolean
   hintsVisible: boolean
@@ -31,6 +33,7 @@ export const SETTINGS_DEFAULTS: AppSettings = {
   theme: 'system',
   restoreSession: true,
   rememberWindow: true,
+  printHeaderFooter: false,
   zoom: 1,
   outlineVisible: true,
   hintsVisible: true,
@@ -47,6 +50,7 @@ function sanitize(src: Record<string, unknown>): AppSettings {
   if (theme === 'light' || theme === 'dark' || theme === 'system') s.theme = theme
   if (typeof src.restoreSession === 'boolean') s.restoreSession = src.restoreSession
   if (typeof src.rememberWindow === 'boolean') s.rememberWindow = src.rememberWindow
+  if (typeof src.printHeaderFooter === 'boolean') s.printHeaderFooter = src.printHeaderFooter
   if (typeof src.zoom === 'number' && Number.isFinite(src.zoom)) s.zoom = clampZoom(src.zoom)
   if (typeof src.outlineVisible === 'boolean') s.outlineVisible = src.outlineVisible
   if (typeof src.hintsVisible === 'boolean') s.hintsVisible = src.hintsVisible

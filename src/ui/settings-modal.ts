@@ -87,7 +87,11 @@ export function showSettingsModal(desktop: boolean): void {
     <label class="setting setting--row">
       <input type="checkbox" data-setting="rememberWindow"${s.rememberWindow ? ' checked' : ''} />
       <span>记住窗口大小和位置</span>
-    </label>`
+    </label>
+    <div class="setting setting--row">
+      <input type="checkbox" data-setting="printHeaderFooter"${s.printHeaderFooter ? ' checked' : ''} />
+      <span>打印默认带页眉页脚<div class="setting__hint">页眉页脚指日期、标题、网址、页码；改此项重启后生效，打印对话框里仍可单次调整</div></span>
+    </div>`
         : ''
     }
   </div>

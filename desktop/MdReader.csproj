@@ -12,9 +12,9 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>..\assets\mdreader.ico</ApplicationIcon>
     <SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
-    <Version>1.26.1013.01</Version>
+    <Version>1.26.1013.02</Version>
     <Product>mdreader</Product>
-    <FileVersion>1.26.1013.1</FileVersion>
+    <FileVersion>1.26.1013.2</FileVersion>
     <AssemblyTitle>mdreader</AssemblyTitle>
     <Description>Markdown 阅读器 —— 三态视图 · 渲染注册表 · 书写提示</Description>
     <DebugType>none</DebugType>

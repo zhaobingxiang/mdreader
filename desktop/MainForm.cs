@@ -104,6 +104,9 @@ internal sealed class MainForm : Form
                 "WebView2");
             Directory.CreateDirectory(userData);
 
+            // 必须在浏览器进程启动前改偏好：运行期 Chromium 用的是内存里的副本
+            ApplyPrintHeaderFooterPref(userData);
+
             var environment = await CoreWebView2Environment.CreateAsync(null, userData);
             await _web.EnsureCoreWebView2Async(environment);
 
@@ -411,6 +414,52 @@ internal sealed class MainForm : Form
     }
 
     // ---------- 窗口几何记忆（rememberWindow） ----------
+
+    /// <summary>
+    /// 打印页眉页脚默认开关：浏览器的打印预览把勾选状态存在 WebView2 配置档
+    /// Preferences 的粘性设置（appState 是一段内嵌 JSON 字符串）里。
+    /// 按应用设置（printHeaderFooter）在启动前把它写好，实现"默认不带页眉页脚"；
+    /// 单次打印仍可在打印对话框里临时改。
+    /// </summary>
+    private static void ApplyPrintHeaderFooterPref(string userData)
+    {
+        var want = SettingsStore.GetBool("printHeaderFooter", false);
+        var prefsPath = Path.Combine(userData, "EBWebView", "Default", "Preferences");
+        try
+        {
+            var doc = File.Exists(prefsPath)
+                ? JsonNode.Parse(File.ReadAllText(prefsPath)) as JsonObject
+                : new JsonObject();
+            if (doc == null) return;
+
+            if (doc["printing"] is not JsonObject printing)
+            {
+                printing = new JsonObject();
+                doc["printing"] = printing;
+            }
+            if (printing["print_preview_sticky_settings"] is not JsonObject sticky)
+            {
+                sticky = new JsonObject();
+                printing["print_preview_sticky_settings"] = sticky;
+            }
+
+            var raw = sticky["appState"]?.GetValue<string>();
+            var state = !string.IsNullOrEmpty(raw)
+                ? JsonNode.Parse(raw) as JsonObject
+                : new JsonObject { ["version"] = 2 };
+            if (state == null) return;
+
+            if (state["isHeaderFooterEnabled"]?.GetValue<bool>() == want) return;
+            state["isHeaderFooterEnabled"] = want;
+            sticky["appState"] = state.ToJsonString();
+            Directory.CreateDirectory(Path.GetDirectoryName(prefsPath)!);
+            File.WriteAllText(prefsPath, doc.ToJsonString());
+        }
+        catch
+        {
+            // 偏好读不了就不干预，用运行时默认
+        }
+    }
 
     private void ApplySavedGeometry()
     {
