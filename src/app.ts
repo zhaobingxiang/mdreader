@@ -999,6 +999,137 @@ export function bootstrapApp(mount: HTMLElement): void {
     }
   })
 
+  // 拖动排序：dragstart 记住源标签，drop 时按落点左/右半边插入
+  let dragTabId: number | null = null
+  layout.tabList.addEventListener('dragstart', (event) => {
+    const drag = event as DragEvent
+    const tabEl = (drag.target as HTMLElement).closest<HTMLElement>('[data-tab]')
+    if (!tabEl) return
+    dragTabId = Number(tabEl.dataset.tab)
+    if (drag.dataTransfer) {
+      drag.dataTransfer.effectAllowed = 'move'
+      drag.dataTransfer.setData('text/plain', String(dragTabId))
+    }
+    tabEl.classList.add('is-dragging')
+  })
+  layout.tabList.addEventListener('dragover', (event) => {
+    if (dragTabId === null) return
+    const drag = event as DragEvent
+    drag.preventDefault()
+    if (drag.dataTransfer) drag.dataTransfer.dropEffect = 'move'
+  })
+  layout.tabList.addEventListener('drop', (event) => {
+    const drag = event as DragEvent
+    if (dragTabId === null) return
+    drag.preventDefault()
+    const from = tabs.findIndex((t) => t.id === dragTabId)
+    dragTabId = null
+    if (from < 0) return
+    const tabEl = (drag.target as HTMLElement).closest<HTMLElement>('[data-tab]')
+    if (!tabEl) return
+    const toId = Number(tabEl.dataset.tab)
+    let to = tabs.findIndex((t) => t.id === toId)
+    if (to < 0 || to === from) return
+    const rect = tabEl.getBoundingClientRect()
+    const after = drag.clientX > rect.left + rect.width / 2
+    const [moved] = tabs.splice(from, 1)
+    if (to > from) to -= 1
+    tabs.splice(after ? to + 1 : to, 0, moved)
+    renderTabBar()
+    scheduleSessionSave()
+  })
+  layout.tabList.addEventListener('dragend', () => {
+    dragTabId = null
+    renderTabBar()
+  })
+
+  // 右键菜单：关闭其他 / 关闭右侧 / 关闭未保存
+  let tabMenu: HTMLElement | null = null
+  const hideTabMenu = (): void => {
+    if (!tabMenu) return
+    tabMenu.remove()
+    tabMenu = null
+    document.removeEventListener('pointerdown', onTabMenuAway, true)
+  }
+  function onTabMenuAway(event: Event): void {
+    if (tabMenu && !tabMenu.contains(event.target as Node)) hideTabMenu()
+  }
+  function showTabMenu(x: number, y: number, items: { label: string; disabled: boolean; run: () => void }[]): void {
+    hideTabMenu()
+    const el = document.createElement('div')
+    el.className = 'tabmenu'
+    for (const it of items) {
+      const btn = document.createElement('button')
+      btn.className = 'tabmenu__item'
+      btn.textContent = it.label
+      btn.disabled = it.disabled
+      btn.addEventListener('click', () => {
+        hideTabMenu()
+        it.run()
+      })
+      el.appendChild(btn)
+    }
+    document.body.appendChild(el)
+    // 先量尺寸再定位，避免菜单超出窗口右缘 / 底缘
+    const rect = el.getBoundingClientRect()
+    el.style.left = `${Math.max(4, Math.min(x, innerWidth - rect.width - 4))}px`
+    el.style.top = `${Math.max(4, Math.min(y, innerHeight - rect.height - 4))}px`
+    tabMenu = el
+    document.addEventListener('pointerdown', onTabMenuAway, true)
+  }
+
+  /** 批量关闭：dirty 的合并成一次确认，确认后连同草稿一起丢弃 */
+  async function closeTabsBatch(targets: TabRecord[], title: string, anchorId: number): Promise<void> {
+    const list = targets.filter((t) => tabs.includes(t))
+    if (list.length === 0) return
+    const dirty = list.filter((t) => t.doc.snapshot.dirty)
+    if (dirty.length > 0) {
+      const names = dirty.map((t) => `「${t.doc.snapshot.name}」`).join('、')
+      const ok = await showMessageModal({
+        title,
+        message: `${names} 有未保存的修改，关闭将丢失这些改动。`,
+        confirmLabel: '全部关闭',
+        cancelLabel: '取消',
+      })
+      if (!ok) return
+    }
+    for (const t of list) {
+      clearDraft(tabPath(t), t.doc.snapshot.name)
+      removeTab(t)
+    }
+    // 右键的那个标签还活着时，把视图切回它
+    const anchor = tabs.find((t) => t.id === anchorId)
+    if (anchor && anchor !== activeTab) switchTab(anchorId)
+  }
+
+  layout.tabList.addEventListener('contextmenu', (event) => {
+    const mouse = event as MouseEvent
+    const tabEl = (event.target as HTMLElement).closest<HTMLElement>('[data-tab]')
+    if (!tabEl) return
+    mouse.preventDefault()
+    const id = Number(tabEl.dataset.tab)
+    const idx = tabs.findIndex((t) => t.id === id)
+    if (idx < 0) return
+    const anchor = tabs[idx]
+    showTabMenu(mouse.clientX, mouse.clientY, [
+      {
+        label: '关闭其他标签',
+        disabled: tabs.length <= 1,
+        run: () => void closeTabsBatch(tabs.filter((t) => t !== anchor), '关闭其他标签', id),
+      },
+      {
+        label: '关闭右侧标签',
+        disabled: idx === tabs.length - 1,
+        run: () => void closeTabsBatch(tabs.slice(idx + 1), '关闭右侧标签', id),
+      },
+      {
+        label: '关闭未保存标签',
+        disabled: !tabs.some((t) => t.doc.snapshot.dirty),
+        run: () => void closeTabsBatch(tabs.filter((t) => t.doc.snapshot.dirty), '关闭未保存标签', id),
+      },
+    ])
+  })
+
   // ---------- 侧栏交互 ----------
 
   layout.outlineList.addEventListener('click', (event) => {

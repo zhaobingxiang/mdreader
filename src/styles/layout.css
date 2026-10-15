@@ -161,6 +161,46 @@
   color: var(--text-1);
 }
 
+.tab.is-dragging {
+  opacity: 0.45;
+}
+
+/* 标签右键菜单：浮在标签栏上，层级压过弹窗 */
+.tabmenu {
+  position: fixed;
+  z-index: 210;
+  min-width: 148px;
+  padding: 4px;
+  border: 1px solid var(--border-1);
+  border-radius: 8px;
+  background: var(--surface-1);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+}
+
+.tabmenu__item {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-1);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: default;
+}
+
+.tabmenu__item:hover:not(:disabled) {
+  background: var(--surface-3);
+}
+
+.tabmenu__item:disabled {
+  color: var(--text-2);
+  opacity: 0.55;
+}
+
 .tabstrip__new {
   flex: none;
   width: 26px;

@@ -23,7 +23,7 @@ export function renderTabs(container: HTMLElement, items: TabItem[]): void {
   container.innerHTML = items
     .map(
       (tab) => `
-<div class="tab${tab.active ? ' is-active' : ''}" data-tab="${tab.id}"${
+<div class="tab${tab.active ? ' is-active' : ''}" data-tab="${tab.id}" draggable="true"${
         tab.path ? ` title="${esc(tab.path)}"` : ''
       }>
   <span class="tab__dot"${tab.dirty ? '' : ' hidden'}></span>
