@@ -16,7 +16,9 @@ internal sealed class MainForm : Form
     private readonly HostBridge _bridge;
     private string? _initialFile;
     private CancellationTokenSource? _pipeCts;
-    private readonly Label _loadingLabel;
+    private readonly Panel _loadingOverlay;
+    private readonly Spinner _spinner;
+    private readonly Label _loadingText;
 
     private bool _allowExit;
     private int _borderPx = 7;
@@ -31,10 +33,6 @@ internal sealed class MainForm : Form
         Size = new Size(1340, 900);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(247, 247, 245);
-
-        // 首帧就绪前不露出窗口：WebView2 初始化 + 页面脚本要两三秒，
-        // 与其让用户盯着白屏倒计时，不如等页面 ping 到位再整体出现
-        Opacity = 0d;
 
         // 「记住窗口大小位置」开启时先用上次退出时的几何恢复
         ApplySavedGeometry();
@@ -59,18 +57,34 @@ internal sealed class MainForm : Form
         };
         Controls.Add(_web);
 
-        // WebView2 初始化 + 页面加载需要几秒，期间用提示盖住空白，
-        // 避免用户面对一个空荡荡的程序框
-        _loadingLabel = new Label
+        // WebView2 初始化 + 页面首帧要两三秒：期间盖一层原生绘制（即开即画）的
+        // 加载动画，页面首帧 ping 到位后撤掉，用户全程看到的是有反馈的启动。
+        // 不用 Dock=Fill：两个 Fill 兄弟控件会互抢剩余区域，直接镜像 WebView2 边界
+        _loadingOverlay = new Panel
         {
-            Text = "正在打开文档，请稍后……",
-            Dock = DockStyle.Fill,
-            TextAlign = ContentAlignment.MiddleCenter,
-            Font = new Font("Microsoft YaHei UI", 14F),
-            ForeColor = Color.FromArgb(96, 106, 116),
             BackColor = Color.FromArgb(247, 247, 245),
         };
-        Controls.Add(_loadingLabel); // 后加的控件 z 序更高，正好盖住下层的 WebView2
+        _spinner = new Spinner
+        {
+            Size = new Size(44, 44),
+            ForeColor = Color.FromArgb(80, 90, 100),
+        };
+        _loadingText = new Label
+        {
+            Text = "正在启动 mdreader……",
+            AutoSize = true,
+            Font = new Font("Microsoft YaHei UI", 12F),
+            ForeColor = Color.FromArgb(96, 106, 116),
+            BackColor = Color.Transparent,
+        };
+        _loadingOverlay.Controls.Add(_spinner);
+        _loadingOverlay.Controls.Add(_loadingText);
+        _loadingOverlay.Resize += (_, _) => CenterLoading();
+        CenterLoading();
+        Controls.Add(_loadingOverlay);
+        // WinForms 里 Controls.Add 是追加到 z 序底部，必须显式置顶才能盖住 WebView2
+        _loadingOverlay.BringToFront();
+        Layout += (_, _) => _loadingOverlay.Bounds = _web.Bounds;
 
         _bridge = new HostBridge(this, _web);
 
@@ -249,7 +263,7 @@ internal sealed class MainForm : Form
     private bool _revealed;
     private System.Windows.Forms.Timer? _revealFallbackTimer;
 
-    /// <summary>页面首帧就绪（启动 ping 到达）后露出窗口；兜底定时器防止永远不显示</summary>
+    /// <summary>页面首帧就绪（启动 ping 到达）后撤掉加载层；兜底定时器防止永远停在加载动画</summary>
     public void RevealWindow()
     {
         if (_revealed) return;
@@ -269,11 +283,68 @@ internal sealed class MainForm : Form
         {
             settle.Stop();
             settle.Dispose();
-            Opacity = 1d;
-            _loadingLabel.Visible = false;
+            _loadingOverlay.Visible = false;
             Activate();
         };
         settle.Start();
+    }
+
+    private void CenterLoading()
+    {
+        var cx = _loadingOverlay.ClientSize.Width / 2;
+        var cy = _loadingOverlay.ClientSize.Height / 2;
+        _spinner.Location = new Point(cx - _spinner.Width / 2, cy - 56);
+        _loadingText.Location = new Point(cx - _loadingText.Width / 2, cy + 12);
+    }
+
+    /// <summary>启动加载用的旋转点圈动画：12 个点绕圈，尾部渐隐</summary>
+    private sealed class Spinner : Control
+    {
+        private readonly System.Windows.Forms.Timer _timer;
+        private int _phase;
+
+        public Spinner()
+        {
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                    | ControlStyles.UserPaint | ControlStyles.SupportsTransparentBackColor,
+                true);
+            BackColor = Color.Transparent;
+            TabStop = false;
+            _timer = new System.Windows.Forms.Timer { Interval = 70 };
+            _timer.Tick += (_, _) =>
+            {
+                _phase = (_phase + 1) % 12;
+                Invalidate();
+            };
+        }
+
+        protected override void OnVisibleChanged(EventArgs e)
+        {
+            base.OnVisibleChanged(e);
+            if (Visible) _timer.Start();
+            else _timer.Stop();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            var cx = Width / 2f;
+            var cy = Height / 2f;
+            var radius = Math.Min(Width, Height) / 2f - 6f;
+            for (var i = 0; i < 12; i++)
+            {
+                var age = (i - _phase + 12) % 12; // 0 = 头部亮点
+                var alpha = 255 - age * 18;
+                var angle = i * Math.PI / 6;
+                var x = cx + (float)(Math.Cos(angle) * radius);
+                var y = cy + (float)(Math.Sin(angle) * radius);
+                var dot = 5.5f - age * 0.25f;
+                using var brush = new SolidBrush(Color.FromArgb(alpha, ForeColor));
+                g.FillEllipse(brush, new RectangleF(x - dot / 2, y - dot / 2, dot, dot));
+            }
+        }
     }
 
     /// <summary>页面标题栏按下时交回系统做窗口拖动</summary>
@@ -305,6 +376,9 @@ internal sealed class MainForm : Form
     {
         var color = dark ? Color.FromArgb(13, 17, 23) : Color.FromArgb(247, 247, 245);
         if (BackColor != color) BackColor = color;
+        _loadingOverlay.BackColor = color;
+        _loadingText.ForeColor = dark ? Color.FromArgb(155, 165, 175) : Color.FromArgb(96, 106, 116);
+        _spinner.ForeColor = dark ? Color.FromArgb(200, 210, 220) : Color.FromArgb(80, 90, 100);
     }
 
     /// <summary>
@@ -336,12 +410,7 @@ internal sealed class MainForm : Form
 
     private void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
     {
-        // 页面就绪，撤掉启动提示
-        if (_loadingLabel.Visible)
-        {
-            _loadingLabel.Visible = false;
-        }
-
+        // 加载层继续盖着：导航完成 ≠ 内容画完，撤层时机由页面首帧 ping（RevealWindow）决定
         _bridge.MarkReady();
 
         if (!string.IsNullOrEmpty(_initialFile) && File.Exists(_initialFile))
