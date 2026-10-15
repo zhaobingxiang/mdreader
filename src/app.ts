@@ -695,13 +695,28 @@ export function bootstrapApp(mount: HTMLElement): void {
     btn.title = maximized ? '向下还原' : '最大化'
   }
 
-  // 无边框窗口的拖动由宿主配合：按下时交回系统标题栏逻辑
-  // tab 行就是标题栏：空白处（含文档名）可拖动，标签和按钮除外
+  // 无边框窗口的拖动由宿主配合：按下后指针移动超过阈值才交回系统标题栏逻辑。
+  // 不能按下即 beginDrag：系统模态拖动循环会吞掉后续点击，真人双击必带几像素
+  // 位移，会被当成微拖动，dblclick 永远发不出来（最大化就失效）。
+  // tab 行就是标题栏：空白处可拖动，标签和按钮除外
   layout.tabStrip.addEventListener('pointerdown', (event) => {
     const mouse = event as PointerEvent
     if (mouse.button !== 0) return
     if ((event.target as HTMLElement).closest('[data-win], .tab, .tabstrip__new')) return
-    void callHost('beginDrag').catch(() => undefined)
+    const sx = mouse.clientX
+    const sy = mouse.clientY
+    const detach = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', detach)
+    }
+    const onMove = (move: PointerEvent) => {
+      if (Math.abs(move.clientX - sx) + Math.abs(move.clientY - sy) > 4) {
+        detach()
+        void callHost('beginDrag').catch(() => undefined)
+      }
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', detach)
   })
   layout.tabStrip.addEventListener('dblclick', (event) => {
     if ((event.target as HTMLElement).closest('[data-win], .tab, .tabstrip__new')) return

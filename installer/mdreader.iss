@@ -2,7 +2,7 @@
 ; 编译：ISCC.exe installer\mdreader.iss
 
 #define MyAppName "mdreader"
-#define MyAppVersion "1.26.1015.03"
+#define MyAppVersion "1.26.1015.04"
 #define MyAppPublisher "mdreader"
 #define MyAppExeName "mdreader.exe"
 
@@ -85,18 +85,21 @@ Type: filesandordirs; Name: "{app}"
 // 删掉后系统回退到 HKCU\Software\Classes\.md，即 mdreader。需要一次 UAC 授权。
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  ResultCode: Integer;
+  ShellApp: Variant;
 begin
   if CurStep = ssPostInstall then
   begin
     if WizardSilent then Exit;
     if not WizardIsTaskSelected('associate') then Exit;
     if not FileExists(ExpandConstant('{tmp}\reset-md-userchoice.ps1')) then Exit;
-    ShellExec('runas',
-      ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    // ShellExec('runas') 提权的控制台进程不遵守 SW_HIDE，会闪一个 PowerShell 窗口；
+    // Shell.Application.ShellExecute 的第 5 参（ShowApp=0）在提权路径上同样生效
+    ShellApp := CreateOleObject('Shell.Application');
+    ShellApp.ShellExecute(
+      ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), '',
       '-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "' +
         ExpandConstant('{tmp}\reset-md-userchoice.ps1') + '"',
-      '', SW_HIDE, ewNoWait, ResultCode);
+      'runas', 0);
     // 用户拒绝 UAC 不算失败：注册表兜底关联仍然有效
   end;
 end;
