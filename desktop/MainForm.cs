@@ -246,7 +246,6 @@ internal sealed class MainForm : Form
         _bridge?.NotifyWindowState(maximized);
     }
 
-    /// <summary>页面标题栏按下时交回系统做窗口拖动</summary>
     private bool _revealed;
     private System.Windows.Forms.Timer? _revealFallbackTimer;
 
@@ -263,14 +262,21 @@ internal sealed class MainForm : Form
         _revealFallbackTimer?.Stop();
         _revealFallbackTimer?.Dispose();
         _revealFallbackTimer = null;
-        BeginInvoke((Action)(() =>
+        // ping 到达只说明首帧已排上合成，再等一小会儿确保真正提交到屏幕，
+        // 否则露窗瞬间仍可能看到未绘完的白底
+        var settle = new System.Windows.Forms.Timer { Interval = 120 };
+        settle.Tick += (_, _) =>
         {
+            settle.Stop();
+            settle.Dispose();
             Opacity = 1d;
             _loadingLabel.Visible = false;
             Activate();
-        }));
+        };
+        settle.Start();
     }
 
+    /// <summary>页面标题栏按下时交回系统做窗口拖动</summary>
     public void BeginDrag()
     {
         ReleaseCapture();

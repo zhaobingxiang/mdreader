@@ -675,8 +675,14 @@ export function bootstrapApp(mount: HTMLElement): void {
         })()
       }
     })
-    // 事件监听已就位：ping 一次让宿主补发窗口状态（启动即最大化时按钮字形要靠它）
-    void callHost('ping').catch(() => undefined)
+    // 事件监听已就位：ping 一次让宿主露出窗口并补发窗口状态（启动即最大化时按钮字形要靠它）。
+    // 必须等首帧真正合成上屏（两轮 rAF）再发：脚本末尾同步 postMessage 会抢在
+    // WebView2 第一次合成之前，宿主提前露窗就是一屏白底。
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        void callHost('ping').catch(() => undefined)
+      })
+    })
   }
 
   // ---------- 自绘标题栏（桌面壳） ----------
