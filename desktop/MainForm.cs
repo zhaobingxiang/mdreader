@@ -32,6 +32,10 @@ internal sealed class MainForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(247, 247, 245);
 
+        // 首帧就绪前不露出窗口：WebView2 初始化 + 页面脚本要两三秒，
+        // 与其让用户盯着白屏倒计时，不如等页面 ping 到位再整体出现
+        Opacity = 0d;
+
         // 「记住窗口大小位置」开启时先用上次退出时的几何恢复
         ApplySavedGeometry();
 
@@ -71,6 +75,10 @@ internal sealed class MainForm : Form
         _bridge = new HostBridge(this, _web);
 
         Load += OnLoadAsync;
+        // 兜底：页面脚本异常没发 ping 时，最迟 6 秒也要把窗口露出来
+        _revealFallbackTimer = new System.Windows.Forms.Timer { Interval = 6000 };
+        _revealFallbackTimer.Tick += (_, _) => RevealWindow();
+        _revealFallbackTimer.Start();
         FormClosed += OnFormClosed;
         LocationChanged += (_, _) => ScheduleGeometrySave();
         SizeChanged += (_, _) => ScheduleGeometrySave();
@@ -239,6 +247,30 @@ internal sealed class MainForm : Form
     }
 
     /// <summary>页面标题栏按下时交回系统做窗口拖动</summary>
+    private bool _revealed;
+    private System.Windows.Forms.Timer? _revealFallbackTimer;
+
+    /// <summary>页面首帧就绪（启动 ping 到达）后露出窗口；兜底定时器防止永远不显示</summary>
+    public void RevealWindow()
+    {
+        if (_revealed) return;
+        if (!IsHandleCreated)
+        {
+            BeginInvoke((Action)RevealWindow);
+            return;
+        }
+        _revealed = true;
+        _revealFallbackTimer?.Stop();
+        _revealFallbackTimer?.Dispose();
+        _revealFallbackTimer = null;
+        BeginInvoke((Action)(() =>
+        {
+            Opacity = 1d;
+            _loadingLabel.Visible = false;
+            Activate();
+        }));
+    }
+
     public void BeginDrag()
     {
         ReleaseCapture();

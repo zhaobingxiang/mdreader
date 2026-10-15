@@ -2,7 +2,7 @@
 ; 编译：ISCC.exe installer\mdreader.iss
 
 #define MyAppName "mdreader"
-#define MyAppVersion "1.26.1015.01"
+#define MyAppVersion "1.26.1015.02"
 #define MyAppPublisher "mdreader"
 #define MyAppExeName "mdreader.exe"
 

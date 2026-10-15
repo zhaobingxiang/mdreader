@@ -131,6 +131,8 @@ internal sealed class HostBridge : IDisposable
                     Reply(id, new JsonObject { ["host"] = "webview2" });
                     // 页面就绪：补发一次当前窗口状态，否则启动即最大化时按钮字形停留在"最大化"
                     NotifyWindowState(_form.WindowState == FormWindowState.Maximized);
+                    // 首帧脚本已经在跑：这时候露出窗口，用户不会看到白屏过程
+                    _form.RevealWindow();
                     break;
                 case "openFile":
                     HandleOpenFile(id);
