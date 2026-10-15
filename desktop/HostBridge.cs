@@ -68,9 +68,14 @@ internal sealed class HostBridge : IDisposable
         }
     }
 
+    /// <summary>启动/转发进来的第一个文件路径；页面恢复会话前会来查询，
+    /// 避免「显式打开的文件」被算进恢复计划后又被恢复抢走活动页</summary>
+    private string? _startupPath;
+
     /// <summary>用指定路径打开文件（启动参数、管道转发、双击打开都会走这里）</summary>
     public void OpenPath(string path)
     {
+        _startupPath ??= Path.GetFullPath(path);
         if (!_ready)
         {
             _pendingOpen.Enqueue(path);
@@ -178,6 +183,9 @@ internal sealed class HostBridge : IDisposable
                     break;
                 case "openPaths":
                     HandleOpenPaths(id, message);
+                    break;
+                case "startupPath":
+                    Reply(id, new JsonObject { ["path"] = _startupPath ?? "" });
                     break;
                 case "beginDrag":
                     if (_form.IsHandleCreated) _form.BeginInvoke((Action)_form.BeginDrag);

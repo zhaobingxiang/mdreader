@@ -246,6 +246,23 @@ export function bootstrapApp(mount: HTMLElement): void {
   let restoreModes = new Map<string, ViewMode>()
   let restoreExpected = 0
   let restoreWantActive = ''
+  /** 恢复计划里的路径（小写键，Windows 路径大小写不定），用来区分
+   *  「恢复推送」和「用户真正打开的那个文件」 */
+  let restorePlan = new Set<string>()
+  /** 启动时用户显式打开的文件：必须压过会话恢复的活动页，否则「双击 A 却显示 B」 */
+  let startupExplicitPath = ''
+  /** 宿主已推送过的路径（小写键，同步记录）：tab 真正建好要等异步 open，会话恢复
+   *  只查 tabs 的话初始文件还没落地就被算进恢复计划，既重复开又让恢复抢回活动页 */
+  const hostPushed = new Set<string>()
+
+  /** 会话恢复要落的活动页：显式打开优先于上次关闭时的活动 tab */
+  function activateRestoreTarget(): void {
+    const target = startupExplicitPath || restoreWantActive
+    if (!target) return
+    const lower = target.toLowerCase()
+    const t = tabs.find((x) => tabPath(x).toLowerCase() === lower)
+    if (t && t !== activeTab) switchTab(t.id)
+  }
 
   // ---------- 缩放（值持久化在设置里） ----------
 
@@ -540,13 +557,11 @@ export function bootstrapApp(mount: HTMLElement): void {
   function noteRestoredTab(): void {
     if (restoreExpected <= 0) return
     restoreExpected -= 1
-    if (restoreExpected === 0 && restoreWantActive) {
-      const t = tabs.find((x) => tabPath(x) === restoreWantActive)
-      if (t && t !== activeTab) switchTab(t.id)
-    }
+    if (restoreExpected === 0 && restoreWantActive) activateRestoreTarget()
   }
 
   async function openFromHost(payload: HostFilePayload): Promise<void> {
+    const planned = restorePlan.has(payload.path.toLowerCase())
     const existing = tabs.find((t) => tabPath(t) === payload.path)
     if (existing) {
       // 双击已打开的文件：切过去即可；本地没改动时顺带刷新成磁盘上的新内容
@@ -555,13 +570,14 @@ export function bootstrapApp(mount: HTMLElement): void {
         existing.doc.setText(payload.text)
         existing.doc.markSaved()
       }
-      noteRestoredTab()
+      // 若已被恢复计数吸收（它排在前面），就不该再消耗一个计数
+      if (planned) noteRestoredTab()
       return
     }
     if (canTakeOverWelcome() && activeTab) {
       activeTab.welcome = false
       await activeTab.doc.open(createHostHandle(payload))
-      noteRestoredTab()
+      if (planned) noteRestoredTab()
       return
     }
     const mode = restoreModes.get(payload.path) ?? getSettings().defaultMode
@@ -569,7 +585,7 @@ export function bootstrapApp(mount: HTMLElement): void {
     await t.doc.open(createHostHandle(payload))
     // 必须走 switchTab：先把界面绑定到新页，不能提前改 activeTab（会让 switchTab 提前返回）
     switchTab(t.id)
-    noteRestoredTab()
+    if (planned) noteRestoredTab()
   }
 
   async function openFile(): Promise<void> {
@@ -651,6 +667,14 @@ export function bootstrapApp(mount: HTMLElement): void {
     onHostEvent((event) => {
       if (event.event === 'openFile') {
         // 双击 .md、启动参数、第二个实例的转发、会话恢复都走这里 → 落成标签页
+        if (!hostPushed.has(event.path.toLowerCase())) {
+          // 同步记两笔账：openFromHost 要等异步读盘才建 tab，恢复逻辑若只看
+          // tabs 会漏算还没落地的初始文件；不在恢复计划里的就是用户显式打开的
+          hostPushed.add(event.path.toLowerCase())
+          if (restoreExpected <= 0 && !restorePlan.has(event.path.toLowerCase())) {
+            startupExplicitPath = event.path
+          }
+        }
         void openFromHost(event).catch((err: unknown) => {
           model.setNotice(`打开失败：${(err as Error).message}`)
         })
@@ -1462,6 +1486,17 @@ export function bootstrapApp(mount: HTMLElement): void {
       await runDraftCheck()
       return
     }
+    // 先问宿主「这次启动显式打开了哪个文件」：push 消息是宏任务，会排在
+    // restoreSession 之后，页面自己的记账赶不上，只能由宿主先给个准信
+    try {
+      const startup = await callHost<{ path?: string }>('startupPath')
+      if (startup.path) {
+        startupExplicitPath = startup.path
+        hostPushed.add(startup.path.toLowerCase())
+      }
+    } catch {
+      // 问不到就按老流程走
+    }
     let entries: { path: string; mode: ViewMode }[] = []
     try {
       const raw = localStorage.getItem(SESSION_KEY)
@@ -1480,7 +1515,10 @@ export function bootstrapApp(mount: HTMLElement): void {
       entries = []
     }
     restoreModes = new Map(entries.map((e) => [e.path, e.mode]))
-    const paths = entries.map((e) => e.path).filter((p) => !tabs.some((t) => tabPath(t) === p))
+    restorePlan = new Set(entries.map((e) => e.path.toLowerCase()))
+    const paths = entries
+      .map((e) => e.path)
+      .filter((p) => !tabs.some((t) => tabPath(t) === p) && !hostPushed.has(p.toLowerCase()))
     if (paths.length > 0) {
       restoreExpected = paths.length
       callHost('openPaths', { paths })
@@ -1492,13 +1530,11 @@ export function bootstrapApp(mount: HTMLElement): void {
       window.setTimeout(() => {
         if (restoreExpected > 0) {
           restoreExpected = 0
-          const t = tabs.find((x) => tabPath(x) === restoreWantActive)
-          if (t && t !== activeTab) switchTab(t.id)
+          activateRestoreTarget()
         }
       }, 2500)
     } else {
-      const t = tabs.find((x) => tabPath(x) === restoreWantActive)
-      if (t && t !== activeTab) switchTab(t.id)
+      activateRestoreTarget()
       await runDraftCheck()
     }
   }
