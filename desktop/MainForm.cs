@@ -356,6 +356,45 @@ internal sealed class MainForm : Form
 
     public void MinimizeWindow() => WindowState = FormWindowState.Minimized;
 
+    /// <summary>用户从资源管理器双击文件转到本实例时调用：窗口要跟着内容一起现身。
+    /// 后台进程直接 SetForegroundWindow 会被系统拦下，标准解法是临时挂到
+    /// 当前前台窗口的输入线程上；再不行退一步闪任务栏图标提示</summary>
+    public void BringToFrontForFile()
+    {
+        if (!IsHandleCreated) return;
+        if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+        var hwnd = Handle;
+        var fore = GetForegroundWindow();
+        var curThread = GetCurrentThreadId();
+        var foreThread = fore != IntPtr.Zero ? GetWindowThreadProcessId(fore, IntPtr.Zero) : 0;
+        var attached = foreThread != 0 && foreThread != curThread && AttachThreadInput(curThread, foreThread, true);
+        try
+        {
+            _ = BringWindowToTop(hwnd);
+            _ = SetForegroundWindow(hwnd);
+        }
+        finally
+        {
+            if (attached) _ = AttachThreadInput(curThread, foreThread, false);
+        }
+        if (GetForegroundWindow() != hwnd)
+        {
+            // 锁屏/前台权限被剥夺时 AttachThreadInput 也拿不到焦点：
+            // 退一步用「瞬时置顶再复原」保证窗口至少排在 z 序最上面
+            _ = SetWindowPos(hwnd, HwndTopmost, 0, 0, 0, 0, SWPNoSizeMove | SWPNoActivate);
+            _ = SetWindowPos(hwnd, HwndNotopmost, 0, 0, 0, 0, SWPNoSizeMove | SWPNoActivate);
+            var info = new FLASHWINFO
+            {
+                cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<FLASHWINFO>(),
+                hwnd = hwnd,
+                dwFlags = FlashwAll | FlashwTimerNoFg,
+                uCount = 3,
+                dwTimeout = 0,
+            };
+            _ = FlashWindowEx(ref info);
+        }
+    }
+
     public void ToggleMaximize() =>
         WindowState = WindowState == FormWindowState.Maximized
             ? FormWindowState.Normal
@@ -488,7 +527,11 @@ internal sealed class MainForm : Form
 
                     if (path.Length > 0 && File.Exists(path))
                     {
-                        BeginInvoke((Action)(() => _bridge.OpenPath(path)));
+                        BeginInvoke((Action)(() =>
+                        {
+                            _bridge.OpenPath(path);
+                            BringToFrontForFile();
+                        }));
                     }
                 }
                 catch (OperationCanceledException)
@@ -682,6 +725,48 @@ internal sealed class MainForm : Form
 
     [DllImport("user32.dll")]
     private static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern bool BringWindowToTop(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr processId);
+
+    [DllImport("user32.dll")]
+    private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
+
+    private static readonly IntPtr HwndTopmost = new(-1);
+    private static readonly IntPtr HwndNotopmost = new(-2);
+    private const uint SWPNoSizeMove = 0x2;
+    private const uint SWPNoActivate = 0x10;
+
+    private const uint FlashwAll = 0x3;
+    private const uint FlashwTimerNoFg = 0x4;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FLASHWINFO
+    {
+        public uint cbSize;
+        public IntPtr hwnd;
+        public uint dwFlags;
+        public uint uCount;
+        public uint dwTimeout;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool FlashWindowEx(ref FLASHWINFO pwfi);
 
     [DllImport("user32.dll")]
     private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
