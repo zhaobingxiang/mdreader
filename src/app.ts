@@ -16,7 +16,18 @@ import {
 import { clearDraft, listDrafts, saveDraft } from './core/draft'
 import { applyThemeSetting, currentTheme, type ThemeName } from './core/theme'
 import { collectTodos, computeStats } from './core/stats'
-import { getSettings, initSettings, patchSettings, subscribeSettings } from './core/settings'
+import {
+  AI_PANEL_MAX_HEIGHT,
+  AI_PANEL_MIN_HEIGHT,
+  getSettings,
+  initSettings,
+  patchSettings,
+  subscribeSettings,
+} from './core/settings'
+import { AiSession } from './core/ai/session'
+import { aiStatus } from './core/ai/host'
+import { BUILTIN_PROVIDERS, describeSelection, getProvider, resolveSelection } from './core/ai/providers'
+import { SNIPPET_GROUPS, insertSnippet } from './core/snippets'
 import { ViewModeController, VIEW_MODES, type ViewMode } from './core/view-mode'
 import { WELCOME_DOC } from './core/welcome'
 import { createZoomController, formatZoom, MAX_ZOOM, MIN_ZOOM } from './core/zoom'
@@ -25,6 +36,8 @@ import { setHighlights, type HighlightKind } from './editor/extensions/highlight
 import { analyzeLinesCached, type LineInfo } from './editor/extensions/lint'
 import { ScrollSync } from './editor/sync-scroll'
 import { copyMarkdown, copyRichText, exportHtml, printPreview } from './features/export'
+import { openMeetingModal } from './features/meeting/panel'
+import type { MeetingContext } from './features/meeting/types'
 import { createDefaultRegistry, MarkdownEngine, type OutlineNode } from './render/markdown'
 import { PreviewPipeline } from './render/pipeline'
 import { debounce } from './render/util'
@@ -36,12 +49,15 @@ import { createLayout } from './ui/layout'
 import { renderTabs } from './ui/tabbar'
 import {
   highlightOutline,
+  renderAiSuggest,
   renderHints,
   renderOutline,
+  renderSyntax,
   renderTodos,
   resolveActiveOutlineId,
   type HintEntry,
 } from './ui/panels'
+import { renderAiPanel } from './ui/ai-panel'
 
 const RENDER_DEBOUNCE_MS = 180
 const FILE_NAME_RE = /\.(md|markdown|mdown|mkd|txt)$/i
@@ -58,6 +74,8 @@ interface TabRecord {
   previewScrollTop: number
   /** 未动的欢迎页占位，可被第一个打开的文件接管 */
   welcome: boolean
+  /** 每个标签页独立的 AI 会话：对话、优化稿、书写建议都跟着页走 */
+  ai: AiSession
 }
 
 export function bootstrapApp(mount: HTMLElement): void {
@@ -153,9 +171,11 @@ export function bootstrapApp(mount: HTMLElement): void {
   function createTab(mode: ViewMode): TabRecord {
     const doc = new MarkdownDocument()
     doc.setAdapter(adapter)
+    const ai = new AiSession(() => ({ name: doc.snapshot.name, text: doc.currentText }))
     const t: TabRecord = {
       id: tabSeq++,
       doc,
+      ai,
       mode,
       editorState: null,
       editorScrollTop: 0,
@@ -489,6 +509,7 @@ export function bootstrapApp(mount: HTMLElement): void {
       pendingPreviewScroll = activeTab.previewScrollTop
       if (activeTab.mode !== 'preview') editor.focus()
     }
+    bindAiSession()
     scheduleOutlineSync()
     scheduleSessionSave()
   }
@@ -508,6 +529,12 @@ export function bootstrapApp(mount: HTMLElement): void {
   function removeTab(t: TabRecord): void {
     const idx = tabs.indexOf(t)
     if (idx < 0) return
+    if (aiBound === t) {
+      aiOff?.()
+      aiOff = null
+      aiBound = null
+    }
+    t.ai.dispose()
     t.doc.dispose()
     tabs.splice(idx, 1)
     if (t === activeTab) {
@@ -642,6 +669,7 @@ export function bootstrapApp(mount: HTMLElement): void {
       if (editor.getText() !== model.currentText) editor.setText(model.currentText)
       scheduleRender()
       scheduleDraft()
+      scheduleAiRender()
       renderTabBar()
       return
     }
@@ -659,6 +687,295 @@ export function bootstrapApp(mount: HTMLElement): void {
     renderTabBar()
     updateStatus()
   })
+
+  // ---------- AI 优化 ----------
+
+  /** 当前订阅的会话：切标签页时换绑，旧页的流式增量不能刷到新页上 */
+  let aiOff: (() => void) | null = null
+  let aiBound: TabRecord | null = null
+
+  function bindAiSession(): void {
+    aiOff?.()
+    aiOff = null
+    const t = activeTab
+    aiBound = t
+    if (!t) return
+    // 换页后第一次绘制要落到最新一条消息，而不是沿用上一页的滚动位置
+    layout.aiConv.dataset.rendered = '0'
+    aiOff = t.ai.subscribe(() => {
+      if (aiBound === t) renderAiSurface(t)
+    })
+  }
+
+  function renderAiSurface(t: TabRecord): void {
+    const settings = getSettings()
+    const configured = resolveSelection(settings.ai) !== null
+    const st = t.ai.snapshot
+    const text = t.doc.currentText
+    const activeConfig = settings.ai.providers[settings.ai.active]
+    renderAiPanel(
+      {
+        conv: layout.aiConv,
+        providerPick: layout.aiProviderPick,
+        modelPick: layout.aiModelPick,
+        status: layout.aiStatus,
+        stop: layout.aiStop,
+        optimize: layout.aiOptimize,
+        input: layout.aiInput,
+      },
+      {
+        state: st,
+        providers: BUILTIN_PROVIDERS.map((p) => ({ id: p.id, label: p.label })),
+        activeProvider: settings.ai.active,
+        models: activeConfig?.models ?? [],
+        activeModel: activeConfig?.model ?? '',
+        configured,
+        inDesktop: inDesktopShell,
+        proposalStale: st.proposalBase !== null && st.proposalBase !== text,
+      },
+    )
+    renderAiSuggest(layout.aiSuggest, {
+      running: st.phase === 'running' && t.ai.mode === 'suggestions',
+      suggestions: st.suggestions,
+      stale: st.suggestionsBase !== null && st.suggestionsBase !== text,
+      error: st.phase === 'error' && t.ai.mode === 'suggestions' ? st.error : null,
+      unconfigured: !configured,
+    })
+  }
+
+  /** 打字时只关心「优化稿 / 建议是否过期」，空闲且没有产物的页不必重绘 */
+  const scheduleAiRender = debounce(() => {
+    const t = activeTab
+    if (!t) return
+    const st = t.ai.snapshot
+    if (st.phase === 'idle' && !st.proposal && st.suggestions.length === 0) return
+    renderAiSurface(t)
+  }, 160)
+
+  /** 面板显隐与高度只认设置，避免点击与设置各存一份状态 */
+  function applyAiChrome(): void {
+    const s = getSettings()
+    layout.aiPanel.hidden = !s.aiPanelVisible
+    layout.root.style.setProperty('--ai-panel-height', `${s.aiPanelHeight}px`)
+    layout.root
+      .querySelector<HTMLElement>('[data-action="toggle-ai"]')
+      ?.classList.toggle('is-active', s.aiPanelVisible)
+  }
+
+  function aiConfigured(): boolean {
+    return resolveSelection(getSettings().ai) !== null
+  }
+
+  /** 首次把文档发给模型前确认一次；同机同用户只问一次 */
+  async function ensureAiUsable(): Promise<boolean> {
+    if (!inDesktopShell) {
+      flashNotice('AI 优化需要在桌面版 mdreader 里使用')
+      return false
+    }
+    if (!aiConfigured()) {
+      flashNotice('先在「设置 → AI 优化」里选择平台与模型')
+      showSettingsModal(true)
+      return false
+    }
+    // 密钥只在宿主里，页面问一次就有答案，比让请求失败再提示更直接
+    try {
+      const status = await aiStatus(getSettings().ai.active)
+      if (!status.hasKey) {
+        flashNotice('这个平台还没有保存 API Key')
+        showSettingsModal(true)
+        return false
+      }
+    } catch {
+      // 宿主不可用时就交给请求自身报错
+    }
+    if (getSettings().ai.consentAt) return true
+    const ok = await showMessageModal({
+      title: '把文档发给模型',
+      message: `AI 优化会把当前文档正文发送给 ${describeSelection(getSettings().ai)}，只用于这次处理，不会写进本地设置。\n继续吗？`,
+      confirmLabel: '发送并继续',
+      cancelLabel: '取消',
+    })
+    if (ok) patchSettings({ ai: { ...getSettings().ai, consentAt: Date.now() } })
+    return ok
+  }
+
+  async function runAiOptimize(): Promise<void> {
+    const t = activeTab
+    if (!t || t.ai.busy) return
+    if (!(await ensureAiUsable())) return
+    if (!tabs.includes(t)) return
+    t.ai.optimize()
+    layout.aiInput.focus()
+  }
+
+  async function runAiSuggest(): Promise<void> {
+    const t = activeTab
+    if (!t || t.ai.busy) return
+    if (!(await ensureAiUsable())) return
+    if (!tabs.includes(t)) return
+    t.ai.suggest()
+  }
+
+  function resizeAiInput(): void {
+    const input = layout.aiInput
+    input.style.height = 'auto'
+    input.style.height = `${Math.min(input.scrollHeight, 120)}px`
+  }
+
+  async function sendAiInput(): Promise<void> {
+    const t = activeTab
+    if (!t || t.ai.busy) return
+    const text = layout.aiInput.value.trim()
+    if (!text) return
+    if (!(await ensureAiUsable())) return
+    if (!tabs.includes(t) || t.ai.busy) return
+    layout.aiInput.value = ''
+    resizeAiInput()
+    if (t.ai.snapshot.phase === 'awaiting') t.ai.answer(text)
+    else t.ai.chat(text)
+  }
+
+  /** 反问的选项按钮：等价于用户把这句话发过去 */
+  function answerAiOption(option: string): void {
+    const t = activeTab
+    if (!t || t.ai.busy || t.ai.snapshot.phase !== 'awaiting') return
+    t.ai.answer(option)
+  }
+
+  function applyAiProposal(): void {
+    const t = activeTab
+    const st = t?.ai.snapshot
+    if (!t || !st?.proposal) return
+    if (st.proposalBase !== null && st.proposalBase !== t.doc.currentText) {
+      flashNotice('文档已改动，这份稿子过期了，请重新优化')
+      return
+    }
+    editor.view.dispatch({
+      changes: { from: 0, to: editor.view.state.doc.length, insert: st.proposal.markdown },
+    })
+    t.ai.clearProposal()
+    editor.focus()
+    flashNotice('已应用 AI 优化稿，Ctrl+Z 可撤销')
+  }
+
+  function showAiDiff(): void {
+    const t = activeTab
+    const proposal = t?.ai.snapshot.proposal
+    if (!t || !proposal) return
+    showDiffModal({
+      title: proposal.title,
+      before: t.doc.currentText,
+      after: proposal.markdown,
+      acceptLabel: '应用 AI 稿',
+      dismissLabel: '保留原文',
+      onAccept: applyAiProposal,
+      onDismiss: () => t.ai.clearProposal(),
+    })
+  }
+
+  async function clearAiConversation(): Promise<void> {
+    const t = activeTab
+    if (!t) return
+    if (t.ai.busy) {
+      flashNotice('先停止当前请求，再清空')
+      return
+    }
+    const st = t.ai.snapshot
+    if (st.turns.length > 0 || st.proposal) {
+      const ok = await showMessageModal({
+        title: '清空 AI 会话',
+        message: '本页的对话、优化稿和 AI 建议都会清掉，文档本身不受影响。',
+        confirmLabel: '清空',
+        cancelLabel: '取消',
+      })
+      if (!ok || !tabs.includes(t)) return
+    }
+    t.ai.reset()
+    layout.aiInput.value = ''
+    resizeAiInput()
+  }
+
+  /** 面板头部切平台 / 切模型：写回设置，保留对话，只影响后续请求 */
+  function switchAiProvider(id: string): void {
+    const s = getSettings()
+    if (id === s.ai.active) return
+    patchSettings({ ai: { ...s.ai, active: id } })
+    const config = getSettings().ai.providers[id]
+    activeTab?.ai.addNote(
+      `已切换到 ${getProvider(id).label} · ${config?.model || '未选择模型'}，后续请求使用新平台`,
+    )
+    if (!config?.model) flashNotice(`${getProvider(id).label} 还没有添加模型，去设置里加一个`)
+  }
+
+  function switchAiModel(model: string): void {
+    const s = getSettings()
+    const id = s.ai.active
+    const config = s.ai.providers[id]
+    if (!config || !model || config.model === model) return
+    patchSettings({
+      ai: { ...s.ai, providers: { ...s.ai.providers, [id]: { ...config, model } } },
+    })
+    activeTab?.ai.addNote(`已切换到 ${getProvider(id).label} · ${model}，后续请求使用新模型`)
+  }
+
+  layout.aiProviderPick.addEventListener('change', () => switchAiProvider(layout.aiProviderPick.value))
+  layout.aiModelPick.addEventListener('change', () => switchAiModel(layout.aiModelPick.value))
+
+  layout.aiInput.addEventListener('input', resizeAiInput)
+  layout.aiInput.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
+    event.preventDefault()
+    void sendAiInput()
+  })
+
+  layout.aiResizer.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    const startY = event.clientY
+    const startHeight = layout.aiPanel.getBoundingClientRect().height
+    const onMove = (move: PointerEvent): void => {
+      const next = Math.min(
+        Math.max(startHeight + (startY - move.clientY), AI_PANEL_MIN_HEIGHT),
+        AI_PANEL_MAX_HEIGHT,
+      )
+      layout.root.style.setProperty('--ai-panel-height', `${Math.round(next)}px`)
+    }
+    const onUp = (): void => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      document.body.classList.remove('is-resizing-v')
+      const height = Number.parseInt(
+        layout.root.style.getPropertyValue('--ai-panel-height') || '0',
+        10,
+      )
+      if (Number.isFinite(height) && height > 0) patchSettings({ aiPanelHeight: height })
+    }
+    document.body.classList.add('is-resizing-v')
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  })
+
+  // ---------- 会记 ----------
+
+  /** 会记面板不反向依赖界面，需要的能力全部从这里注入 */
+  function meetingContext(): MeetingContext {
+    return {
+      desktop: inDesktopShell,
+      readDocument() {
+        const doc = activeTab?.doc
+        return { name: doc?.snapshot.name ?? '未命名.md', text: doc?.currentText ?? '' }
+      },
+      openMinutes(markdown, name) {
+        const t = createTab(getSettings().defaultMode)
+        t.doc.createUntitled(name)
+        t.doc.setText(markdown)
+        switchTab(t.id)
+      },
+      notice: (message) => flashNotice(message),
+      ensureAiUsable,
+      showSettings: () => showSettingsModal(inDesktopShell),
+    }
+  }
 
   // ---------- 桌面壳事件 ----------
 
@@ -918,6 +1235,9 @@ export function bootstrapApp(mount: HTMLElement): void {
       case 'settings':
         showSettingsModal(inDesktopShell)
         break
+      case 'meeting':
+        openMeetingModal(meetingContext())
+        break
       case 'toggle-outline': {
         layout.outlinePanel.classList.toggle('is-collapsed')
         patchSettings({
@@ -988,6 +1308,47 @@ export function bootstrapApp(mount: HTMLElement): void {
           onAccept: () => model.acceptExternal(),
           onDismiss: () => model.dismissExternal(),
         })
+        break
+      }
+      case 'toggle-ai':
+        patchSettings({ aiPanelVisible: !getSettings().aiPanelVisible })
+        break
+      case 'ai-close':
+        patchSettings({ aiPanelVisible: false })
+        break
+      case 'ai-optimize':
+        void runAiOptimize()
+        break
+      case 'ai-send':
+        void sendAiInput()
+        break
+      case 'ai-stop':
+        activeTab?.ai.cancel()
+        break
+      case 'ai-clear':
+        void clearAiConversation()
+        break
+      case 'ai-suggest':
+        void runAiSuggest()
+        break
+      case 'ai-option':
+        answerAiOption(
+          activeTab?.ai.snapshot.ask?.options[Number(actionBtn.dataset.aiOption ?? '-1')] ?? '',
+        )
+        break
+      case 'ai-apply':
+        applyAiProposal()
+        break
+      case 'ai-diff':
+        showAiDiff()
+        break
+      case 'ai-discard':
+        activeTab?.ai.clearProposal()
+        break
+      case 'toggle-syntax': {
+        const open = layout.syntaxBody.hidden
+        layout.syntaxBody.hidden = !open
+        layout.syntaxToggle.setAttribute('aria-expanded', String(open))
         break
       }
       default:
@@ -1242,6 +1603,29 @@ export function bootstrapApp(mount: HTMLElement): void {
   layout.hintPanel.addEventListener('click', (event) => {
     const target = event.target as HTMLElement
 
+    // 语法速查：点一项就往光标处插入骨架
+    const snippetBtn = target.closest<HTMLElement>('[data-snippet]')
+    if (snippetBtn) {
+      const [gi, ii] = (snippetBtn.dataset.snippet ?? '').split('-').map(Number)
+      const snippet = SNIPPET_GROUPS[gi]?.items[ii]
+      if (snippet) {
+        if (viewMode.current === 'preview') viewMode.set('split')
+        insertSnippet(editor.view, snippet.body)
+      }
+      return
+    }
+
+    // AI 建议：给出明确行号的直接定位
+    const aiItem = target.closest<HTMLElement>('[data-ai-suggest-line]')
+    if (aiItem) {
+      const line = Number(aiItem.dataset.aiSuggestLine || '0')
+      if (line > 0) {
+        if (viewMode.current !== 'split') viewMode.set('split')
+        locateLine(line, 'info')
+      }
+      return
+    }
+
     // 「应用」按钮：直接改文档
     const fixButton = target.closest<HTMLElement>('[data-hint-fix]')
     if (fixButton) {
@@ -1440,6 +1824,7 @@ export function bootstrapApp(mount: HTMLElement): void {
   // ---------- 设置联动 ----------
 
   let lastTheme: ThemeName = currentTheme()
+  let lastAiSettingsKey = ''
   subscribeSettings((s) => {
     applyThemeSetting(s.theme)
     // Mermaid 图表配色不跟随 CSS 变量，深浅切换后要重渲染
@@ -1456,6 +1841,13 @@ export function bootstrapApp(mount: HTMLElement): void {
     if (hintsCollapsed === s.hintsVisible) {
       layout.hintPanel.classList.toggle('is-collapsed', !s.hintsVisible)
     }
+    applyAiChrome()
+    // 只有 AI 相关设置变了才重绘会话区（主题 / 缩放也会走这里）
+    const aiKey = JSON.stringify(s.ai)
+    if (aiKey !== lastAiSettingsKey) {
+      lastAiSettingsKey = aiKey
+      if (activeTab) renderAiSurface(activeTab)
+    }
   })
 
   // ---------- 启动 ----------
@@ -1469,6 +1861,8 @@ export function bootstrapApp(mount: HTMLElement): void {
     layout.root.classList.add('is-resized')
   }
 
+  renderSyntax(layout.syntaxBody, SNIPPET_GROUPS)
+  bindAiSession()
   void renderAll()
   updateStatus()
 

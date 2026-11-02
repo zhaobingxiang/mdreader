@@ -8,10 +8,21 @@ export function showDiffModal(options: {
   title: string
   before: string
   after: string
+  /** 底部按钮文案：外部改写是「采纳」，AI 稿是「应用」 */
+  acceptLabel?: string
+  dismissLabel?: string
   onAccept(): void
   onDismiss(): void
 }): void {
-  const { title, before, after, onAccept, onDismiss } = options
+  const {
+    title,
+    before,
+    after,
+    acceptLabel = '采纳外部版本',
+    dismissLabel = '忽略外部版本',
+    onAccept,
+    onDismiss,
+  } = options
   const lines = diffLines(before, after)
   const added = lines.filter((l) => l.kind === 'add').length
   const removed = lines.filter((l) => l.kind === 'del').length
@@ -37,8 +48,8 @@ export function showDiffModal(options: {
       .join('')}</pre>
   </div>
   <div class="modal__foot">
-    <button class="btn" data-dismiss>忽略外部版本</button>
-    <button class="btn btn--primary" data-accept>采纳外部版本</button>
+    <button class="btn" data-dismiss>${escapeHtmlAttr(dismissLabel)}</button>
+    <button class="btn btn--primary" data-accept>${escapeHtmlAttr(acceptLabel)}</button>
   </div>
 </div>`
 

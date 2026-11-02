@@ -14,6 +14,20 @@ export interface AppLayout {
   fixAll: HTMLElement
   hintList: HTMLElement
   hintTodos: HTMLElement
+  /** 书写提示里的「语法速查」折叠区 */
+  syntaxToggle: HTMLElement
+  syntaxBody: HTMLElement
+  /** 书写提示里的 AI 建议区 */
+  aiSuggest: HTMLElement
+  aiPanel: HTMLElement
+  aiResizer: HTMLElement
+  aiConv: HTMLElement
+  aiInput: HTMLTextAreaElement
+  aiProviderPick: HTMLSelectElement
+  aiModelPick: HTMLSelectElement
+  aiStatus: HTMLElement
+  aiOptimize: HTMLElement
+  aiStop: HTMLElement
   editorPane: HTMLElement
   editorHost: HTMLElement
   previewPane: HTMLElement
@@ -97,6 +111,8 @@ export function createLayout(mount: HTMLElement): AppLayout {
       </div>
       <button class="btn" data-action="toggle-outline" title="显示 / 隐藏大纲">大纲</button>
       <button class="btn" data-action="toggle-hints" title="显示 / 隐藏书写提示">提示</button>
+      <button class="btn" data-action="toggle-ai" title="显示 / 隐藏 AI 优化面板">AI</button>
+      <button class="btn" data-action="meeting" title="会记：录音或导入转写，生成会议纪要与总结报告">会记</button>
       <button class="btn" data-action="settings" title="设置">设置</button>
       <div class="menu" data-role="export-menu">
         <button class="btn btn--primary" data-action="export" title="导出">导出</button>
@@ -148,10 +164,40 @@ export function createLayout(mount: HTMLElement): AppLayout {
           hidden
         >应用全部</button>
       </div>
-      <div class="hint-list" data-role="hint-list"></div>
-      <div class="hint-todos" data-role="hint-todos"></div>
+      <div class="panel__body" data-role="hint-body">
+        <button type="button" class="panel__fold" data-role="syntax-toggle" data-action="toggle-syntax" aria-expanded="false">
+          <span class="panel__fold-caret">▸</span><span>Markdown 语法速查</span>
+        </button>
+        <div class="syntax" data-role="syntax" hidden></div>
+        <div class="ai-suggest" data-role="ai-suggest"></div>
+        <div class="hint-list" data-role="hint-list"></div>
+        <div class="hint-todos" data-role="hint-todos"></div>
+      </div>
     </aside>
   </div>
+
+  <section class="ai-panel" data-role="ai-panel" hidden aria-label="AI 优化">
+    <div class="ai-panel__resizer" data-role="ai-resizer" title="拖动调整高度"></div>
+    <div class="ai-panel__head">
+      <span class="ai-panel__title">AI 优化</span>
+      <select class="ai-panel__pick" data-role="ai-provider-pick" aria-label="模型平台" title="切换平台"></select>
+      <select class="ai-panel__pick ai-panel__pick--model" data-role="ai-model-pick" aria-label="模型" title="切换模型"></select>
+      <span class="ai-panel__status" data-role="ai-status"></span>
+      <div class="ai-panel__actions">
+        <button class="btn btn--small btn--primary" data-role="ai-optimize" data-action="ai-optimize" title="通读全文，给出格式与表述的完整优化稿">自动优化</button>
+        <button class="btn btn--small" data-role="ai-stop" data-action="ai-stop" hidden>停止</button>
+        <button class="btn btn--small" data-action="ai-clear" title="清空本页对话与产物">清空</button>
+        <button class="btn btn--small btn--icon" data-action="ai-close" title="收起 AI 面板" aria-label="收起">✕</button>
+      </div>
+    </div>
+    <div class="ai-panel__body">
+      <div class="ai-conv" data-role="ai-conv"></div>
+      <div class="ai-compose">
+        <textarea class="ai-compose__input" data-role="ai-input" rows="1" placeholder="告诉 AI 怎么改这份文档，或直接提问…"></textarea>
+        <button class="btn btn--primary" data-action="ai-send">发送</button>
+      </div>
+    </div>
+  </section>
 
   <footer class="statusbar">
     <div class="statusbar__left" data-role="status-left">
@@ -182,6 +228,18 @@ export function createLayout(mount: HTMLElement): AppLayout {
     fixAll: need(mount, 'fix-all'),
     hintList: need(mount, 'hint-list'),
     hintTodos: need(mount, 'hint-todos'),
+    syntaxToggle: need(mount, 'syntax-toggle'),
+    syntaxBody: need(mount, 'syntax'),
+    aiSuggest: need(mount, 'ai-suggest'),
+    aiPanel: need(mount, 'ai-panel'),
+    aiResizer: need(mount, 'ai-resizer'),
+    aiConv: need(mount, 'ai-conv'),
+    aiInput: need<HTMLTextAreaElement>(mount, 'ai-input'),
+    aiProviderPick: need<HTMLSelectElement>(mount, 'ai-provider-pick'),
+    aiModelPick: need<HTMLSelectElement>(mount, 'ai-model-pick'),
+    aiStatus: need(mount, 'ai-status'),
+    aiOptimize: need(mount, 'ai-optimize'),
+    aiStop: need(mount, 'ai-stop'),
     editorPane: need(mount, 'editor-pane'),
     editorHost: need(mount, 'editor-host'),
     previewPane: need(mount, 'preview-pane'),

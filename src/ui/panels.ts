@@ -1,5 +1,7 @@
 import type { OutlineNode } from '../render/markdown'
 import type { TodoItem } from '../core/stats'
+import type { SnippetGroup } from '../core/snippets'
+import type { AiSuggestItem } from '../core/ai/types'
 import { escapeHtml } from '../render/util'
 
 export interface HintEntry {
@@ -120,4 +122,65 @@ export function renderTodos(el: HTMLElement, todos: TodoItem[]): void {
 </button>`,
     )
     .join('')}</div>`
+}
+
+/** 语法速查：按分组平铺，点一项插入骨架（data-snippet 是「组-项」下标） */
+export function renderSyntax(el: HTMLElement, groups: SnippetGroup[]): void {
+  el.innerHTML = groups
+    .map(
+      (group, gi) => `<div class="syntax__group">
+<div class="syntax__title">${escapeHtml(group.title)}</div>
+<div class="syntax__grid">${group.items
+        .map(
+          (item, ii) =>
+            `<button type="button" class="syntax__item" data-snippet="${gi}-${ii}" title="${escapeHtml(item.detail)}"><code>${escapeHtml(item.label)}</code></button>`,
+        )
+        .join('')}</div>
+</div>`,
+    )
+    .join('')
+}
+
+export interface AiSuggestView {
+  /** 正在为当前文档跑建议 */
+  running: boolean
+  suggestions: AiSuggestItem[]
+  /** 建议生成后文档又改过 */
+  stale: boolean
+  error: string | null
+  /** 还没配置模型时提示去设置 */
+  unconfigured: boolean
+}
+
+export function renderAiSuggest(el: HTMLElement, view: AiSuggestView): void {
+  const action = view.running
+    ? '<span class="ai-suggest__note"><span class="spinner"></span>正在通读文档…</span>'
+    : view.unconfigured
+      ? '<span class="ai-suggest__note">先在设置里选择模型</span>'
+      : `<button type="button" class="panel__action" data-action="ai-suggest">${
+          view.suggestions.length > 0 ? '重新检查' : '让 AI 检查'
+        }</button>`
+
+  const stale = view.stale
+    ? '<div class="ai-suggest__stale">文档已改动，建议可能过期</div>'
+    : ''
+  const error = view.error ? `<div class="ai-suggest__error">${escapeHtml(view.error)}</div>` : ''
+
+  let body = ''
+  if (view.suggestions.length > 0) {
+    body = `<div class="ai-suggest__list">${view.suggestions
+      .map((item) => {
+        const line = item.line
+          ? `<span class="ai-suggest__line">${item.line}</span>`
+          : '<span class="ai-suggest__line">·</span>'
+        return `<button type="button" class="ai-suggest__item${item.severity === 'warning' ? ' is-warning' : ''}" data-ai-suggest-line="${item.line ?? ''}">
+${line}<span class="ai-suggest__msg">${escapeHtml(item.message)}</span>
+</button>`
+      })
+      .join('')}</div>`
+  } else if (!view.running && !view.error && !view.unconfigured) {
+    body = '<div class="panel__empty">还没有 AI 建议</div>'
+  }
+
+  el.innerHTML = `<div class="ai-suggest__head"><span>AI 建议</span>${action}</div>${stale}${error}${body}`
 }

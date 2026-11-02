@@ -165,6 +165,15 @@ internal sealed class MainForm : Form
             core.ProcessFailed += OnProcessFailed;
             core.NewWindowRequested += OnNewWindowRequested;
             core.NavigationStarting += OnNavigationStarting;
+            // 会记要开麦克风：无边框窗口里没有 WebView2 的授权气泡，
+            // 不放行的话 getUserMedia 直接 NotAllowedError，用户只会看到「录音没反应」
+            core.PermissionRequested += (_, args) =>
+            {
+                if (args.PermissionKind == CoreWebView2PermissionKind.Microphone)
+                {
+                    args.State = CoreWebView2PermissionState.Allow;
+                }
+            };
             _bridge.AttachAssets(core, environment);
 
             core.Navigate($"https://{HostBridge.VirtualHost}/index.html");

@@ -25,6 +25,11 @@ internal static class Program
             return;
         }
 
+        // 过期的 AI 会话产物在启动时顺手清掉，别让 workfile 无限长
+        _ = Task.Run(() => Workfile.CleanupOlderThan());
+        // 上次崩溃残留的录音与转写分块同样按天清理
+        _ = Task.Run(() => AsrEngine.CleanupOlderThan());
+
         Application.Run(new MainForm(target));
     }
 

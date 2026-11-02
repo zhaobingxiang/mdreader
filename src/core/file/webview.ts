@@ -22,6 +22,13 @@ export interface HostFilePayload {
   lastModified: number
 }
 
+/** 转写片段：起止是相对整场录音的秒数 */
+export interface AsrSegment {
+  start: number
+  end: number
+  text: string
+}
+
 export type HostEvent =
   | ({ event: 'openFile' } & HostFilePayload)
   | { event: 'fileChanged'; path: string; text: string }
@@ -29,6 +36,53 @@ export type HostEvent =
   | { event: 'error'; message: string }
   | { event: 'windowState'; maximized: boolean }
   | { event: 'confirmExit' }
+  | { event: 'aiDelta'; requestId: number; kind: 'content' | 'reasoning'; text: string }
+  | {
+      event: 'aiToolCall'
+      requestId: number
+      index: number
+      id: string
+      name: string
+      arguments: string
+    }
+  | {
+      event: 'aiDone'
+      requestId: number
+      cancelled: boolean
+      finishReason?: string
+      usage?: Record<string, number>
+    }
+  | { event: 'aiError'; requestId: number; message: string }
+  | { event: 'aiRetry'; requestId: number; attempt: number; delayMs: number; message: string }
+  | { event: 'aiModelFallback'; requestId: number; from: string; to: string }
+  | {
+      event: 'asrProgress'
+      requestId: number
+      phase: 'resolve' | 'download' | 'extract'
+      percent: number
+      bytes: number
+      total: number
+      speed: number
+    }
+  | {
+      event: 'asrSegments'
+      requestId: number
+      segments: AsrSegment[]
+      chunk: number
+      chunks: number
+      percent: number
+    }
+  | {
+      event: 'asrDone'
+      requestId: number
+      cancelled: boolean
+      segments?: AsrSegment[]
+      seconds?: number
+      ready?: boolean
+      dir?: string
+      version?: number
+    }
+  | { event: 'asrError'; requestId: number; message: string }
 
 type PathListener = (text: string) => void
 
@@ -123,6 +177,29 @@ export function notifyTitle(
 export function revealInExplorer(path: string): void {
   if (!isWebViewHost() || !path) return
   void callHost('reveal', { path }).catch(() => undefined)
+}
+
+/** 用系统关联程序打开（会记报告生成后直接在浏览器里看） */
+export function openExternally(path: string): void {
+  if (!isWebViewHost() || !path) return
+  void callHost('openExternal', { path }).catch(() => undefined)
+}
+
+/**
+ * 走「另存为」对话框落一个文本文件，返回真实路径；用户取消返回 null。
+ * kind 只影响对话框的扩展名建议，写入内容一律 UTF-8 无 BOM。
+ */
+export async function saveHostFile(
+  text: string,
+  suggested: string,
+  kind: 'md' | 'html' = 'md',
+): Promise<string | null> {
+  const result = await callHost<HostFilePayload & { cancelled?: boolean }>('saveAs', {
+    text,
+    suggested,
+    kind,
+  })
+  return result.cancelled ? null : result.path
 }
 
 /** 把宿主返回的文件信息包成 FileHandle */

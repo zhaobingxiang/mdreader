@@ -5,14 +5,9 @@ import {
   type CompletionSource,
 } from '@codemirror/autocomplete'
 import type { EditorView } from '@codemirror/view'
+import { SLASH_SNIPPETS, type Snippet } from '../../core/snippets'
 
 const CURSOR = '$0'
-
-interface Snippet {
-  label: string
-  detail: string
-  body: string
-}
 
 function applyBody(view: EditorView, from: number, to: number, body: string): void {
   const index = body.indexOf(CURSOR)
@@ -27,7 +22,7 @@ function applyBody(view: EditorView, from: number, to: number, body: string): vo
 
 function toCompletion(snippet: Snippet): Completion {
   return {
-    label: snippet.label,
+    label: snippet.slash ?? snippet.label,
     detail: snippet.detail,
     type: 'keyword',
     apply(view, _completion, from, to) {
@@ -36,35 +31,15 @@ function toCompletion(snippet: Snippet): Completion {
   }
 }
 
-const SLASH_SNIPPETS: Snippet[] = [
-  { label: '/h1', detail: '一级标题', body: `# ${CURSOR}` },
-  { label: '/h2', detail: '二级标题', body: `## ${CURSOR}` },
-  { label: '/h3', detail: '三级标题', body: `### ${CURSOR}` },
-  {
-    label: '/table',
-    detail: '表格骨架',
-    body: `| 列 1 | 列 2 | 列 3 |\n| --- | --- | --- |\n| ${CURSOR} |  |  |`,
+const DATE_COMPLETION: Completion = {
+  label: '/date',
+  detail: '当前日期',
+  type: 'keyword',
+  apply(view, _completion, from, to) {
+    applyBody(view, from, to, new Date().toISOString().slice(0, 10))
   },
-  { label: '/code', detail: '代码块', body: '```$0\n\n```' },
-  { label: '/todo', detail: '待办项', body: `- [ ] ${CURSOR}` },
-  { label: '/quote', detail: '引用块', body: `> ${CURSOR}` },
-  { label: '/hr', detail: '分割线', body: `\n---\n${CURSOR}` },
-  { label: '/note', detail: '提示块 · 注意', body: `> [!NOTE]\n> ${CURSOR}` },
-  { label: '/tip', detail: '提示块 · 提示', body: `> [!TIP]\n> ${CURSOR}` },
-  { label: '/warning', detail: '提示块 · 警告', body: `> [!WARNING]\n> ${CURSOR}` },
-  { label: '/danger', detail: '提示块 · 危险', body: `> [!DANGER]\n> ${CURSOR}` },
-  { label: '/important', detail: '提示块 · 重要', body: `> [!IMPORTANT]\n> ${CURSOR}` },
-  { label: '/img', detail: '图片', body: `![${CURSOR}](path/to/image.png)` },
-  { label: '/link', detail: '链接', body: `[${CURSOR}](https://)` },
-  { label: '/math', detail: '块级公式', body: `$$\n${CURSOR}\n$$` },
-  {
-    label: '/mermaid',
-    detail: '流程图',
-    body: `\`\`\`mermaid\nflowchart LR\n  A[${CURSOR}] --> B[下一步]\n\`\`\``,
-  },
-  { label: '/details', detail: '折叠块', body: `<details>\n<summary>${CURSOR}</summary>\n\n\n</details>` },
-  { label: '/date', detail: '当前日期', body: new Date().toISOString().slice(0, 10) },
-]
+}
+
 
 const CODE_LANGUAGES = [
   'javascript', 'typescript', 'jsx', 'tsx', 'python', 'java', 'go', 'rust',
@@ -116,7 +91,7 @@ export const markdownSnippetSource: CompletionSource = (
     if (!/[\w/:.@-]/.test(before)) {
       return {
         from: slash.from,
-        options: SLASH_SNIPPETS.map(toCompletion),
+        options: [...SLASH_SNIPPETS.map(toCompletion), DATE_COMPLETION],
         validFor: /^\/[\w-]*$/,
       }
     }

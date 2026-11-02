@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
@@ -31,6 +32,8 @@ internal sealed class HostBridge : IDisposable
     private readonly Dictionary<string, DateTime> _selfWrites = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _allowedPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly Queue<string> _pendingOpen = new();
+    private readonly AiClient _ai = new();
+    private readonly AsrEngine _asr;
 
     /// <summary>当前文档的目录，本地图片等相对资源以此为基准解析（见 mdasset.local）</summary>
     private string? _docDir;
@@ -57,6 +60,7 @@ internal sealed class HostBridge : IDisposable
     {
         _form = form;
         _web = web;
+        _asr = new AsrEngine(form);
     }
 
     public void MarkReady()
@@ -165,6 +169,9 @@ internal sealed class HostBridge : IDisposable
                     HandleReveal(message);
                     Reply(id, new JsonObject { ["ok"] = true });
                     break;
+                case "openExternal":
+                    HandleOpenExternal(id, message);
+                    break;
                 case "print":
                     HandlePrint(id);
                     break;
@@ -206,6 +213,59 @@ internal sealed class HostBridge : IDisposable
                 case "exitResult":
                     HandleExitResult(message);
                     Reply(id, new JsonObject { ["ok"] = true });
+                    break;
+                case "aiStatus":
+                    Reply(id, AiStatus(message));
+                    break;
+                case "aiSetKey":
+                    Reply(id, AiSetKey(message));
+                    break;
+                case "aiListModels":
+                    HandleAiListModels(id, message);
+                    break;
+                case "aiChat":
+                    HandleAiChat(id, message);
+                    break;
+                case "aiCancel":
+                    if (message["requestId"]?.GetValue<int>() is { } cancelId) _ai.Cancel(cancelId);
+                    Reply(id, new JsonObject { ["ok"] = true });
+                    break;
+                case "aiWorkfile":
+                    HandleAiWorkfile(id, message);
+                    break;
+                case "aiWorkfileClear":
+                    Workfile.Remove(message["sessionId"]?.GetValue<string>() ?? string.Empty);
+                    Reply(id, new JsonObject { ["ok"] = true });
+                    break;
+                case "asrStatus":
+                    Reply(id, _asr.Status());
+                    break;
+                case "asrInstall":
+                    HandleAsrInstall(id, message);
+                    break;
+                case "asrInstallZip":
+                    HandleAsrInstallZip(id, message);
+                    break;
+                case "asrCancel":
+                    if (message["requestId"]?.GetValue<int>() is { } asrCancelId) _asr.Cancel(asrCancelId);
+                    Reply(id, new JsonObject { ["ok"] = true });
+                    break;
+                case "asrAudioOpen":
+                    _asr.AudioOpen(message["key"]?.GetValue<string>() ?? string.Empty);
+                    Reply(id, new JsonObject { ["ok"] = true });
+                    break;
+                case "asrAudioAppend":
+                    HandleAsrAudioAppend(id, message);
+                    break;
+                case "asrAudioClose":
+                    Reply(id, _asr.AudioClose(message["key"]?.GetValue<string>() ?? string.Empty));
+                    break;
+                case "asrAudioClear":
+                    _asr.AudioClear(message["key"]?.GetValue<string>() ?? string.Empty);
+                    Reply(id, new JsonObject { ["ok"] = true });
+                    break;
+                case "asrTranscribe":
+                    HandleAsrTranscribe(id, message);
                     break;
                 default:
                     ReplyError(id, $"未知指令：{action}");
@@ -293,13 +353,17 @@ internal sealed class HostBridge : IDisposable
     private void HandleSaveAs(int id, JsonObject message)
     {
         var suggested = message["suggested"]?.GetValue<string>() ?? "未命名.md";
+        // kind 只影响对话框的扩展名建议；会记报告存 HTML，不应改动当前文档的资源目录
+        var html = (message["kind"]?.GetValue<string>() ?? "md") == "html";
 
         using var dialog = new SaveFileDialog
         {
             Title = "另存为",
-            Filter = "Markdown 文档|*.md|所有文件|*.*",
+            Filter = html
+                ? "HTML 文件|*.html|所有文件|*.*"
+                : "Markdown 文档|*.md|所有文件|*.*",
             FileName = suggested,
-            DefaultExt = "md",
+            DefaultExt = html ? "html" : "md",
             AddExtension = true,
         };
 
@@ -317,7 +381,7 @@ internal sealed class HostBridge : IDisposable
         File.WriteAllText(path, text, new UTF8Encoding(false));
         Authorize(path);
         AttachWatch(path);
-        _docDir = Path.GetDirectoryName(path);
+        if (!html) _docDir = Path.GetDirectoryName(path);
 
         Reply(id, new JsonObject
         {
@@ -406,6 +470,245 @@ internal sealed class HostBridge : IDisposable
         {
             // 定位失败不影响使用
         }
+    }
+
+    /// <summary>
+    /// 交给系统关联程序打开（会记的 HTML 报告）。只认用户已经在对话框里确认过的
+    /// 路径，且只放文档类扩展名，避免页面拿授权路径去拉起可执行文件。
+    /// </summary>
+    private void HandleOpenExternal(int id, JsonObject message)
+    {
+        if (!TryAuthorizedPath(message["path"]?.GetValue<string>(), id, out var path)) return;
+        if (!File.Exists(path))
+        {
+            ReplyError(id, "文件不存在");
+            return;
+        }
+
+        var extension = Path.GetExtension(path).ToLowerInvariant();
+        if (extension is not (".html" or ".htm"))
+        {
+            ReplyError(id, "只允许打开 HTML 报告");
+            return;
+        }
+
+        try
+        {
+            // UseShellExecute 走系统关联，等价于双击文件；路径由 ShellExecute 处理，不经 cmd 解析
+            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            Reply(id, new JsonObject { ["ok"] = true });
+        }
+        catch (Exception ex)
+        {
+            ReplyError(id, $"打开失败：{ex.Message}");
+        }
+    }
+
+    // ---------- AI 优化 ----------
+
+    private static readonly Regex ProviderIdPattern = new("^[a-z0-9_-]{1,40}$", RegexOptions.Compiled);
+
+    private static string? ProviderId(JsonObject message)
+    {
+        var raw = message["provider"]?.GetValue<string>() ?? string.Empty;
+        return ProviderIdPattern.IsMatch(raw) ? raw : null;
+    }
+
+    private JsonObject AiStatus(JsonObject message)
+    {
+        var provider = ProviderId(message);
+        if (provider == null) return new JsonObject { ["hasKey"] = false, ["tail"] = "", ["builtin"] = false };
+        var (hasKey, tail) = SecretsStore.Status(provider);
+        return new JsonObject { ["hasKey"] = hasKey, ["tail"] = tail, ["builtin"] = SecretsStore.IsBuiltin(provider) };
+    }
+
+    /// <summary>密钥只进不出：页面传上来明文，回的永远只是有无 + 尾号</summary>
+    private JsonObject AiSetKey(JsonObject message)
+    {
+        var provider = ProviderId(message);
+        if (provider == null) throw new InvalidOperationException("未知的模型平台");
+
+        var key = message["key"]?.GetValue<string>();
+        SecretsStore.Set(provider, key);
+        var (hasKey, tail) = SecretsStore.Status(provider);
+        return new JsonObject
+        {
+            ["hasKey"] = hasKey,
+            ["tail"] = tail,
+            ["builtin"] = SecretsStore.IsBuiltin(provider),
+        };
+    }
+
+    private void HandleAiListModels(int id, JsonObject message)
+    {
+        var provider = ProviderId(message);
+        var baseUrl = message["baseUrl"]?.GetValue<string>()?.Trim();
+        if (provider == null || string.IsNullOrEmpty(baseUrl))
+        {
+            ReplyError(id, "缺少平台或接口地址");
+            return;
+        }
+        var key = SecretsStore.Get(provider);
+        if (string.IsNullOrEmpty(key))
+        {
+            ReplyError(id, "尚未配置 API Key");
+            return;
+        }
+
+        // 拉列表要发网络请求，不能堵住 UI 线程的消息泵
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                Reply(id, await _ai.ListModelsAsync(baseUrl, key));
+            }
+            catch (Exception ex)
+            {
+                ReplyError(id, ex.Message);
+            }
+        });
+    }
+
+    private void HandleAiChat(int id, JsonObject message)
+    {
+        var provider = ProviderId(message);
+        var baseUrl = message["baseUrl"]?.GetValue<string>()?.Trim();
+        var model = message["model"]?.GetValue<string>()?.Trim();
+        var requestId = message["requestId"]?.GetValue<int>() ?? 0;
+
+        if (provider == null || string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(model) || requestId == 0)
+        {
+            ReplyError(id, "模型请求参数不完整");
+            return;
+        }
+        if (message["messages"] is not JsonArray messages || messages.Count == 0)
+        {
+            ReplyError(id, "对话内容为空");
+            return;
+        }
+        if (messages.Count > 200)
+        {
+            ReplyError(id, "对话过长，请清空后重新开始");
+            return;
+        }
+
+        var key = SecretsStore.Get(provider);
+        if (string.IsNullOrEmpty(key))
+        {
+            ReplyError(id, "尚未配置 API Key");
+            return;
+        }
+
+        // 密钥只留在宿主：请求体由这里组装，页面永远看不到 Authorization
+        _ai.Start(
+            new AiChatRequest(
+                requestId,
+                baseUrl,
+                model,
+                JsonClone.Clone<JsonArray>(messages),
+                message["tools"] is JsonArray tools ? JsonClone.Clone<JsonArray>(tools) : null,
+                message["thinkingParam"]?.GetValue<string>() ?? "none",
+                message["deepThinking"]?.GetValue<bool>() ?? false,
+                message["maxTokens"]?.GetValue<int>() ?? 16_384,
+                message["fallbackModel"]?.GetValue<string>()?.Trim()),
+            key,
+            Post);
+        Reply(id, new JsonObject { ["started"] = true, ["requestId"] = requestId });
+    }
+
+    private void HandleAiWorkfile(int id, JsonObject message)
+    {
+        var sessionId = message["sessionId"]?.GetValue<string>() ?? string.Empty;
+        var name = message["name"]?.GetValue<string>() ?? string.Empty;
+        var content = message["content"]?.GetValue<string>() ?? string.Empty;
+
+        // 会话 id 与文件名都走白名单，页面无法借这条通道写到别处
+        var path = Workfile.Write(sessionId, name, content);
+        if (path == null)
+        {
+            ReplyError(id, "产物写入失败");
+            return;
+        }
+        Reply(id, new JsonObject { ["path"] = path });
+    }
+
+    // ---------- 会记：本地语音转写 ----------
+
+    /// <summary>模型包 260MB，下载与解包都在后台线程跑；页面靠 asrProgress / asrDone 跟进度</summary>
+    private void HandleAsrInstall(int id, JsonObject message)
+    {
+        var requestId = message["requestId"]?.GetValue<int>() ?? 0;
+        var url = message["url"]?.GetValue<string>()?.Trim() ?? string.Empty;
+
+        if (requestId == 0)
+        {
+            ReplyError(id, "缺少请求编号");
+            return;
+        }
+        if (url.Length == 0)
+        {
+            ReplyError(id, "还没有配置模型包下载地址");
+            return;
+        }
+
+        _asr.StartInstall(url, requestId, Post);
+        Reply(id, new JsonObject { ["started"] = true, ["requestId"] = requestId });
+    }
+
+    private void HandleAsrInstallZip(int id, JsonObject message)
+    {
+        var requestId = message["requestId"]?.GetValue<int>() ?? 0;
+        if (requestId == 0)
+        {
+            ReplyError(id, "缺少请求编号");
+            return;
+        }
+        _asr.StartInstallFromZip(requestId, Post);
+        Reply(id, new JsonObject { ["started"] = true, ["requestId"] = requestId });
+    }
+
+    /// <summary>录音分片以 base64 传输，单片限 8MB（约 4 分钟 16k 单声道）。
+    /// 页面必须边解边送，攒完整段再发会把 WebView2 消息通道压死</summary>
+    private void HandleAsrAudioAppend(int id, JsonObject message)
+    {
+        var key = message["key"]?.GetValue<string>() ?? string.Empty;
+        var payload = message["base64"]?.GetValue<string>() ?? string.Empty;
+
+        if (payload.Length > 8 * 1024 * 1024)
+        {
+            ReplyError(id, "音频分片过大");
+            return;
+        }
+
+        byte[] bytes;
+        try
+        {
+            bytes = Convert.FromBase64String(payload);
+        }
+        catch
+        {
+            ReplyError(id, "音频分片编码错误");
+            return;
+        }
+
+        _asr.AudioAppend(key, bytes);
+        Reply(id, new JsonObject { ["ok"] = true, ["bytes"] = bytes.Length });
+    }
+
+    private void HandleAsrTranscribe(int id, JsonObject message)
+    {
+        var requestId = message["requestId"]?.GetValue<int>() ?? 0;
+        var key = message["key"]?.GetValue<string>() ?? string.Empty;
+        var threads = message["threads"]?.GetValue<int>() ?? 0;
+
+        if (requestId == 0 || key.Length == 0)
+        {
+            ReplyError(id, "转写参数不完整");
+            return;
+        }
+
+        _asr.StartTranscribe(key, requestId, threads, Post);
+        Reply(id, new JsonObject { ["started"] = true, ["requestId"] = requestId });
     }
 
     // ---------- 窗口控制 / 退出确认 ----------
@@ -844,5 +1147,7 @@ internal sealed class HostBridge : IDisposable
         _watchers.Clear();
         _selfWrites.Clear();
         _pendingOpen.Clear();
+        _ai.Dispose();
+        _asr.Dispose();
     }
 }
